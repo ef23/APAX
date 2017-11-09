@@ -12,19 +12,18 @@ type role = | Follower | Candidate | Leader
 (* Unique ID of this node (server) *)
 type id = int
 
-type entry
-
 (* State representation *)
 type state = {
 	role : role;
-	term : int;
-	votedfor : int;
+	currentTerm : int;
+	votedFor : int;
 	log : entry list;
-	commit_index : int;
-	last_applied : int;
-	next_index : int;
-	match_index : int;
-	neighboring_ips : string list
+	commitIndex : int;
+	lastApplied : int;
+	nextIndex : int;
+	matchIndex : int;
+	
+	neighboringIPs : string list
 }
 
 (* Initialize state with list of other IPs in the consensus system *)
