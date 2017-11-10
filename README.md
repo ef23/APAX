@@ -13,3 +13,7 @@ Fri | Sat | Sun meetings as necessary
 2. Basic server-server communication w/ websockets (using Raft modules)
 3. Leader election
 4. Log replication
+
+Dependencies:
+
+ocaml-websocket
