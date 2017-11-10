@@ -34,9 +34,11 @@ let get_my_addr () =
    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0) ;;
 
 let main_server  serv_fun =
-   if Array.length Sys.argv < 2 then Printf.eprintf "usage : serv_up port\n"
-   else try
-          let port =  int_of_string Sys.argv.(1) in
+   (* if Array.length Sys.argv < 2 then Printf.eprintf "usage : serv_up port\n"
+   else  *)
+   try
+          (* let port =  int_of_string Sys.argv.(1) in *)
+          let port =  8080 in
           let my_address = get_my_addr()
           in establish_server serv_fun  (Unix.ADDR_INET(my_address, port))
         with
