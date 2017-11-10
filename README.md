@@ -1,5 +1,9 @@
 # RaftML
 
+## Installation
+
+Install [ocaml-websocket](https://github.com/vbmithr/ocaml-websocket) by following instructions and also running `opam install async_ssl` when an error happens.
+
 ## Weekly workflow
 Mon Wed meetings after 3110 Discussion
 Fri | Sat | Sun meetings as necessary
