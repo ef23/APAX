@@ -1,0 +1,16 @@
+To run "serv_up.ml":
+
+Go to utop
+# #use "serv_up.ml";
+# main_server uppercase_service;;
+
+In terminal
+telnet [ip_address] 8080
+
+To exit from the client side
+control ]
+
+To kill the server
+lsof -i:8080
+kill [pid]
+
