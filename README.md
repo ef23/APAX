@@ -2,7 +2,6 @@
 
 ## Installation
 
-Install [ocaml-websocket](https://github.com/vbmithr/ocaml-websocket) by following instructions and also running `opam install async_ssl` when an error happens.
 
 ## Weekly workflow
 Mon Wed meetings after 3110 Discussion
@@ -13,7 +12,25 @@ Fri | Sat | Sun meetings as necessary
 2. Basic server-server communication w/ pure sockets (using Raft modules)
 3. Leader election
 4. Log replication
-5. Client side impl with websockets to communciate to leader lel idk
+5. Client side impl to communciate to leader
 
-Dependencies:
-ocaml-websocket
+## Usage
+
+### Server
+To start a server, go to utop:
+```
+# #use "serv_up.ml";
+# go_uppercase_service [port];;
+```
+To kill the server, run the following in terminal:
+```
+lsof -i:[port]
+kill [pid]
+```
+
+### Client
+To start the client, go to terminal:
+`telnet [ip_address] [port]`
+
+To exit from the client side, go to terminal:
+`control ]`
