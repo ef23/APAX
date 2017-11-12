@@ -29,7 +29,7 @@ kill [pid]
 ```
 
 ### Client
-To start the client, go to terminal:
+To test the server, go to terminal:
 `telnet [ip_address] [port]`
 
 To exit from the client side, go to terminal:
