@@ -7,7 +7,7 @@
  * last_log_index: index of candidate’s last log entry
  * last_log_term: term of candidate’s last log entry
  *)
-module VoteRequest = sig
+module type VoteRequest = sig
   type vote_request = {
     term : int;
     candidate_id : int;
@@ -19,7 +19,7 @@ end
 (* current_term: currentTerm, for candidate to update itself
  * vote_granted: true means candidate received vote
  *)
-module VoteResponse : sig
+module type VoteResponse = sig
   type vote_response = {
     current_term : int;
     vote_granted : bool

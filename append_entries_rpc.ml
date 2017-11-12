@@ -8,7 +8,7 @@
  * entries: list of entries of type 'a to store in log
  * leader_commit: leader's commit index
  *)
-module AppendEntriesRequest : sig
+module type AppendEntriesRequest = sig
   type 'a append_entries_request = {
     term : int;
     leader_id : int;
@@ -24,7 +24,7 @@ end
  * success: if the follower contained entry matching prevLogIndex and 
  * prevLogTerm
  *)
-module AppendEntriesResponse : sig
+module type AppendEntriesResponse = sig
   type append_entries_response = {
     current_term : int;
     success : bool
