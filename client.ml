@@ -29,6 +29,7 @@ let client_fun ic oc =
        flush oc ;
        let r = input_line ic
        in Printf.printf "Response : %s\n\n" r;
+       flush oc ;
           if r = "END" then ( Unix.shutdown_connection ic ; raise Exit) ;
      done
    with
