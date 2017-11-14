@@ -10,7 +10,10 @@ open Lwt
 (* Shared mutable counter *)
 let counter = ref 0
 
-let listen_address = Unix.inet_addr_loopback
+let get_my_addr () = 
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
 
