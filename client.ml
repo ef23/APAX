@@ -18,19 +18,24 @@ let main_client client_fun server_addr server_port_num=
            with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;
 
-
+let timer = ref (Unix.setitimer ITIMER_REAL {it_interval=5.0;it_value=5.0})
 let client_fun ic oc =
    try
      while true do
+       if (!timer.it_value = 0.)  then begin
        print_string  "Request : " ;
        flush Pervasives.stdout ;
-       output_string oc ((input_line Pervasives.stdin)^"\n") ;
-       (* output_string oc (("KEKEKEKEK")^"\n") ; *)
+       (* output_string oc ((input_line Pervasives.stdin)^"\n") ; *)
+       output_string oc (("read")^"\n") ; (*make client automatically do stuff. can reuse in server code*)
+       output_string oc (("inc")^"\n") ;
        flush oc ;
        let r = input_line ic
        in Printf.printf "Response : %s\n\n" r;
        flush oc ;
           if r = "END" then ( Unix.shutdown_connection ic ; raise Exit) ;
+        end
+      else
+      print_endline("pausing jej");
      done
    with
        Exit -> exit 0
