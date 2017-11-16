@@ -21,18 +21,20 @@ type state = {
     lastApplied : int;
     nextIndex : int;
     matchIndex : int; *)
-
+    heartbeat: int;
     neighboringIPs : string list
 }
 
 let counter = ref 0
 
 (* the lower range of the election timeout, in this case 150-300ms*)
-let lower = 150
-let range = 150 in
-
-let gen_rand_counter =
+let generate_heartbeat =
+    let lower = 150 in
+    let range = 150 in
     (Random.int range) + lower
+
+let change_heartbeat st =
+    {st with heartbeat = generate_heartbeat}
 
 let init_state ips = {
     role = Leader;
@@ -44,6 +46,7 @@ let init_state ips = {
     nextIndex : int;
     matchIndex : int; *)
     neighboringIPs = ips;
+    heartbeat = generate_heartbeat;
 }
 
 let transition st new_role = {st with role = new_role}

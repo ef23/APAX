@@ -38,6 +38,10 @@ val handle_message: string -> string
 (* Initialize state with list of other IPs in the consensus system *)
 val init_state : string list -> state
 
+(* return a state with a new randomized heartbeat when a node transitions from a
+ * candidate to a follower *)
+val change_heartbeat: state -> state
+
 (* [transition st r] returns a new state
  * st' where st'.role = r
  * and  *)
