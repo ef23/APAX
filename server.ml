@@ -27,6 +27,13 @@ type state = {
 
 let counter = ref 0
 
+(* the lower range of the election timeout, in this case 150-300ms*)
+let lower = 150
+let range = 150 in
+
+let gen_rand_counter =
+    (Random.int range) + lower
+
 let init_state ips = {
     role = Leader;
 (*     currentTerm : int;
