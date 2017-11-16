@@ -2,15 +2,47 @@
 *
 *     Clients can increment a shared counter or read its current value.
 *
-*         Build with: ocamlfind ocamlopt -package lwt,lwt.unix -linkpkg -o counter-server ./counter-server.ml
+*         Build with: ocamlfind ocamlopt -package lwt,lwt.unix -linkpkg -o server ./server.ml
 *          *)
 
 open Lwt
 
 (* Shared mutable counter *)
+type id = int
+
+type role = | Follower | Candidate | Leader
+
+type state = {
+    role : role;
+(*  currentTerm : int;
+    votedFor : int;
+    log : entry list;
+    commitIndex : int;
+    lastApplied : int;
+    nextIndex : int;
+    matchIndex : int; *)
+
+    neighboringIPs : string list
+}
+
 let counter = ref 0
 
-let get_my_addr () = 
+let init_state ips = {
+    role = Leader;
+(*     currentTerm : int;
+    votedFor : int;
+    log : entry list;
+    commitIndex : int;
+    lastApplied : int;
+    nextIndex : int;
+    matchIndex : int; *)
+    neighboringIPs = ips;
+}
+
+let transition st new_role = {st with role = new_role}
+
+
+let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let listen_address = get_my_addr ()
@@ -29,7 +61,7 @@ let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
         match msg with
-        | Some msg -> 
+        | Some msg ->
             let reply = handle_message msg in
             Lwt_io.write_line oc reply >>= handle_connection ic oc
         | None -> Lwt_log.info "Connection closed" >>= return)
@@ -40,7 +72,7 @@ let accept_connection conn =
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
     Lwt_log.info "New connection" >>= return
- 
+
 let create_socket () =
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
