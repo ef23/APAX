@@ -1,15 +1,10 @@
 open Core
 open Async
 
-let rec jej x = print_endline "hi"; upon (after (Time.Span.create ~ms:6000 ())) (jej);;
+let rec jej x = print_endline "hi"; upon (after (Time.Span.create ~ms:1000 ())) (jej);;
+let rec jej2 x = print_endline "lol"; upon (after (Time.Span.create ~ms:2000 ())) (jej2);;
 
-let run =
-  print_endline("kek");
-  (* while (true) do *)
-  upon (after (Time.Span.create ~ms:6000 ())) (jej);
-(*   upon (after (Time.Span.create ~ms:3000 ())) (fun _ -> print_endline "line 3");
- *)  (* print_endline "line 4"; *)
-(* done; *)
-  ();
+let _ = upon (after (Time.Span.create ~ms:1000 ())) (jej);;
+let _ = upon (after (Time.Span.create ~ms:1100 ())) (jej2);;
 
 Scheduler.go ()
