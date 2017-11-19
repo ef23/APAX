@@ -24,6 +24,7 @@ let client_fun ic oc =
      while true do
        (* if (!timer.it_value = 0.)  then begin *)
        print_string  "Request : " ;
+       print_string (string_of_float (Unix.time ()));
        flush Pervasives.stdout ;
        (* output_string oc ((input_line Pervasives.stdin)^"\n") ; *)
        output_string oc (("read")^"\n") ; (*make client automatically do stuff. can reuse in server code*)

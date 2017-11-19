@@ -2,26 +2,61 @@
 *
 *     Clients can increment a shared counter or read its current value.
 *
-*         Build with: ocamlfind ocamlopt -package lwt,lwt.unix -linkpkg -o counter-server ./counter-server.ml
+*         Build with: ocamlfind ocamlopt -package lwt,lwt.unix -linkpkg -o server ./server.ml
 *          *)
 
 open Lwt
 
 (* Shared mutable counter *)
+type id = int
+
+type role = | Follower | Candidate | Leader
+
+type state = {
+    role : role;
+(*  currentTerm : int;
+    votedFor : int;
+    log : entry list;
+    commitIndex : int;
+    lastApplied : int;
+    nextIndex : int;
+    matchIndex : int; *)
+    heartbeat: int;
+    neighboringIPs : string list
+}
+
 let counter = ref 0
 
 (* the lower range of the election timeout, in this case 150-300ms*)
-let lower = 150
-let range = 150 in
-
-let gen_rand_counter = 
+let generate_heartbeat =
+    let lower = 150 in
+    let range = 150 in
     (Random.int range) + lower
 
-let get_my_addr () = 
+let change_heartbeat st =
+    {st with heartbeat = generate_heartbeat}
+
+let init_state ips = {
+    role = Leader;
+(*     currentTerm : int;
+    votedFor : int;
+    log : entry list;
+    commitIndex : int;
+    lastApplied : int;
+    nextIndex : int;
+    matchIndex : int; *)
+    neighboringIPs = ips;
+    heartbeat = generate_heartbeat;
+}
+
+let transition st new_role = {st with role = new_role}
+
+
+let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let listen_address = get_my_addr ()
-let port = 8070
+let port = 9000
 let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
@@ -36,7 +71,7 @@ let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
         match msg with
-        | Some msg -> 
+        | Some msg ->
             let reply = handle_message msg in
             Lwt_io.write_line oc reply >>= handle_connection ic oc
         | None -> Lwt_log.info "Connection closed" >>= return)
@@ -46,9 +81,8 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    (* counter := !counter + 1; *)
     Lwt_log.info "New connection" >>= return
- 
+
 let create_socket () =
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
