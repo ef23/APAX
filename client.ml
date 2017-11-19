@@ -3,7 +3,7 @@ let main_client client_fun server_addr server_port_num=
    then Printf.printf "usage :  client server port\n"
    else *) let server = server_addr in
         let server_addr =
-          try  Unix.inet_addr_of_string server
+          try Unix.inet_addr_of_string server
           with Failure("inet_addr_of_string") ->
                  try  (Unix.gethostbyname server).Unix.h_addr_list.(0)
                  with Not_found ->
@@ -18,8 +18,12 @@ let main_client client_fun server_addr server_port_num=
            with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;
 
-(* let timer = ref (Unix.setitimer ITIMER_REAL {it_interval=5.0;it_value=5.0}) *)
+let rec jej x = print_endline "hi"; Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (jej);;
+
 let client_fun ic oc =
+  (* this would be a heartbeat thing *)
+  Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (jej);
+  Async.Scheduler.go ();
    try
      while true do
        (* if (!timer.it_value = 0.)  then begin *)
@@ -33,13 +37,10 @@ let client_fun ic oc =
        let r = input_line ic
        in Printf.printf "Response : %s\n\n" r;
        flush oc ;
-          if r = "END" then ( Unix.shutdown_connection ic ; raise Exit) ;
-        (* end *)
-      (* else
-      print_endline("pausing jej"); *)
+       if r = "END" then ( Unix.shutdown_connection ic ; raise Exit) ;
      done
    with
        Exit -> exit 0
-     | exn -> Unix.shutdown_connection ic ; raise exn  ;;
+     | exn -> Unix.shutdown_connection ic ; raise exn
 
-let go_client server_addr server_port_num = main_client client_fun server_addr server_port_num ;;
+main_client "10.132.10.130" "9000"
