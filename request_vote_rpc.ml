@@ -1,6 +1,3 @@
-(* Represents a request made by a candidate node to gather votes in an
- * election and the response.
- *)
 
 (* term: candidate’s term
  * candidate_id: candidate requesting vote

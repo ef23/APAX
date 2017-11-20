@@ -1,5 +1,5 @@
 open Log
-(* Represents a call made by leader to replicate log entries, and is also used 
+(* Represents a call made by leader to replicate log entries, and is also used
  * as heartbeat to ensure that leader is still alive and the response.
  *)
 
@@ -17,17 +17,17 @@ module type AppendEntriesReq = sig
     prev_log_term : int;
     entries : entry list;
     leader_commit : int
-  } 
+  }
 end
 
 
 (* current_term: for leader to update its current term
- * success: if the follower contained entry matching prevLogIndex and 
+ * success: if the follower contained entry matching prevLogIndex and
  * prevLogTerm
  *)
 module type AppendEntriesRes = sig
   type append_entries_res = {
     current_term : int;
     success : bool
-  }   
+  }
 end

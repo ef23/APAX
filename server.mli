@@ -8,8 +8,6 @@ open Append_entries_rpc
 	transformed.
  *)
 
-(* hi andrei ¯\_(ツ)_/¯*)
-
 (* Follower, Candidate, Leader *)
 type role
 (* = | Follower | Candidate | Leader *)
@@ -41,22 +39,22 @@ val change_heartbeat: unit -> unit
  * and  *)
 val transition : state -> role -> state
 
-(* [req_append_entries str] sends an appendEntries call to another server 
- * [str] is the message we want to send bc we were REQ u 
+(* [req_append_entries str] sends an appendEntries call to another server
+ * [str] is the message we want to send bc we were REQ u
  *)
 val req_append_entries : AppendEntriesReq.append_entries_req -> ip_address_str -> unit
 
-(* [res_append_entries str] sends an appendEntries call to another server 
+(* [res_append_entries str] sends an appendEntries call to another server
  * [str] is the message we want to send
  *)
 val res_append_entries : AppendEntriesRes.append_entries_res -> ip_address_str -> unit
 
-(* [req_request_vote str] sends an requestVote call 
+(* [req_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
 val req_request_vote : VoteReq.vote_req -> ip_address_str -> unit
 
-(* [res_request_vote str] sends an requestVote call 
+(* [res_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
 val res_request_vote : VoteReq.vote_req -> ip_address_str -> unit

@@ -1,4 +1,4 @@
-(* specifications for a Log module that represents a data structure for 
+(* specifications for a Log module that represents a data structure for
  * storing and manipulating log entries *)
 
 (* represents a log entry to be stored in the log.
@@ -13,7 +13,7 @@ type entry
 (* abstract Log module signature; a Log must be able to manipulate
  * and compare entries. *)
 module type Log = sig
-	type log = entry list
+	type log
 
 	(* [add l e] returns a log l' containing e and all of the items in l *)
 	val add : log -> entry -> log
@@ -31,7 +31,7 @@ module type Log = sig
 	 * false otherwise *)
 	val compare : entry -> entry -> bool
 end
-(* 
+(*
 	[MergeLogs (L1) (L2)] takes in two Logs and merges them
 	module MergeLogs (L1 : Log) (L2 : Log) = sig
 	end *)
