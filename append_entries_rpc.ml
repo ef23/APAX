@@ -9,9 +9,7 @@ type append_entries_req = {
   leader_commit : int
 }
 
-
 type append_entries_res = {
   current_term : int;
   success : bool
 }
-
