@@ -9,25 +9,21 @@ open Log
  * entries: list of entries of type 'a to store in log
  * leader_commit: leader's commit index
  *)
-module type AppendEntriesReq = sig
-  type append_entries_req = {
-    term : int;
-    leader_id : int;
-    prev_log_index : int;
-    prev_log_term : int;
-    entries : entry list;
-    leader_commit : int
-  }
-end
+type append_entries_req = {
+  term : int;
+  leader_id : int;
+  prev_log_index : int;
+  prev_log_term : int;
+  entries : entry list;
+  leader_commit : int
+}
 
 
 (* current_term: for leader to update its current term
  * success: if the follower contained entry matching prevLogIndex and
  * prevLogTerm
  *)
-module type AppendEntriesRes = sig
-  type append_entries_res = {
-    current_term : int;
-    success : bool
-  }
-end
+type append_entries_res = {
+  current_term : int;
+  success : bool
+}

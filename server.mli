@@ -12,14 +12,10 @@ open Append_entries_rpc
 type role
 (* = | Follower | Candidate | Leader *)
 
-(* Unique ID of this node (server) *)
-type id
-(* = int *)
-
 (* State representation *)
 type state
 
-type ip_address_str = string
+type ip_address_str
 
 (* Gets the IP of this server *)
 val get_my_addr: unit -> Unix.inet_addr
@@ -27,33 +23,29 @@ val get_my_addr: unit -> Unix.inet_addr
 (* Returns a string upon receiving a message *)
 val handle_message: string -> string
 
-(* Initialize state with list of other IPs in the consensus system *)
-val init_state : string list -> state
-
 (* return a state with a new randomized heartbeat when a node transitions from a
  * candidate to a follower *)
 val change_heartbeat: unit -> unit
 
-
 (* [req_append_entries str] sends an appendEntries call to another server
  * [str] is the message we want to send
  *)
-val req_append_entries : AppendEntriesReq.append_entries_req -> ip_address_str -> unit
+val req_append_entries : append_entries_req -> ip_address_str -> unit
 
 (* [res_append_entries str] sends an appendEntries call to another server
  * [str] is the message we want to send
  *)
-val res_append_entries : AppendEntriesRes.append_entries_res -> ip_address_str -> unit
+val res_append_entries : append_entries_res -> ip_address_str -> unit
 
 (* [req_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
-val req_request_vote : VoteReq.vote_req -> ip_address_str -> unit
+val req_request_vote : vote_req -> ip_address_str -> unit
 
 (* [res_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
-val res_request_vote : VoteReq.vote_req -> ip_address_str -> unit
+val res_request_vote : vote_req -> ip_address_str -> unit
 
 (* Client-server interaction: Client has a list of the server ips they can
  * connect to; can communicate with any server and the server will send the data

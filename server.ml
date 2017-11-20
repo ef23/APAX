@@ -6,10 +6,13 @@
 *          *)
 
 open Lwt
+open Log
 open Request_vote_rpc
 open Append_entries_rpc
 
 type role = | Follower | Candidate | Leader
+
+type ip_address_str = string
 
 type state = {
     id : int;
@@ -31,7 +34,8 @@ let generate_heartbeat =
     let range = 150 in
     (Random.int range) + lower
 
-let serv_state =  ref {
+let serv_state =  ref { 
+    id = -1;
     role = Follower;
     currentTerm = 0;
     votedFor = None;
@@ -49,8 +53,8 @@ let vote_counter = ref 0
 let change_heartbeat () = 
     serv_state := {!serv_state with heartbeat = generate_heartbeat}
 
-let update_neighbors ips = 
-    serv_state := {!serv_state with neighboringIPs = ips}
+let update_neighbors ips id = 
+    serv_state := {!serv_state with neighboringIPs = ips; id = id}
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -61,10 +65,15 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
+let req_append_entries msg = failwith "u suck"
+let res_append_entries msg = failwith "u suck"
+let req_request_vote msg = failwith "u suck"
+let res_request_vote msg = failwith "succ my zucc"
+
 let handle_message msg =
     match msg with
-    | "read" -> string_of_int !counter
-    | "inc"  -> counter := !counter + 1; "Counter has been incremented"
+    | "read" -> string_of_int !vote_counter
+    | "inc"  -> vote_counter := !vote_counter + 1; "Counter has been incremented"
     | _      -> "Unknown command"
 
 let rec handle_connection ic oc () =
@@ -94,19 +103,6 @@ let create_server sock =
     let rec serve () =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
-let init_state ips = ref {
-    role = Follower;
-    currentTerm = 0;
-    votedFor = None;
-    log = [];
-    commitIndex = 0;
-    lastApplied = 0;
-    heartbeat = generate_heartbeat;
-    neighboringIPs = ips;
-    nextIndexList = [];
-    matchIndexList = [];
-}
 
 let _ =
     let sock = create_socket () in
