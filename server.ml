@@ -109,6 +109,10 @@ let create_server sock =
 let set_term i =
     {!serv_state with currentTerm = i}
 
+(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the 
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
 let rec send_rpcs f ips = 
     match ips with
     | [] -> ()
@@ -116,17 +120,23 @@ let rec send_rpcs f ips =
         let _ = f ip in
         send_rpcs f t
 
+(* [get_entry_term e_opt] takes in the value of a state's last entry option and
+ * returns the last entry's term, or -1 if there was no last entry (aka the log
+ * is empty) *)
 let get_entry_term e_opt = 
     match e_opt with
     | Some e -> e.entryTerm
     | None -> -1
 
+(* [start_election ()] starts the election for this server by incrementing its
+ * term and sending RequestVote RPCs to every other server in the clique *)
 let start_election () = 
     (* increment term *)
     let curr_term = !serv_state.currentTerm in
     serv_state := set_term (curr_term + 1);
 
     let neighbors = !serv_state.neighboringIPs in
+    (* ballot is a vote_req *)
     let ballot = {
         term = !serv_state.currentTerm;
         candidate_id = !serv_state.id;
