@@ -34,7 +34,7 @@ let generate_heartbeat =
     let range = 150 in
     (Random.int range) + lower
 
-let serv_state =  ref { 
+let serv_state =  ref {
     id = -1;
     role = Follower;
     currentTerm = 0;
@@ -50,10 +50,10 @@ let serv_state =  ref {
 
 let vote_counter = ref 0
 
-let change_heartbeat () = 
+let change_heartbeat () =
     serv_state := {!serv_state with heartbeat = generate_heartbeat}
 
-let update_neighbors ips id = 
+let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
 
 let get_my_addr () =
@@ -66,6 +66,8 @@ let backlog = 10
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
 let req_append_entries msg = failwith "u suck"
+
+
 let res_append_entries msg = failwith "u suck"
 let req_request_vote msg = failwith "u suck"
 let res_request_vote msg = failwith "succ my zucc"
@@ -75,6 +77,12 @@ let handle_message msg =
     | "read" -> string_of_int !vote_counter
     | "inc"  -> vote_counter := !vote_counter + 1; "Counter has been incremented"
     | _      -> "Unknown command"
+
+let rec send_heartbeat oc () =
+    print_endline "jejejejj";
+    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -90,6 +98,8 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc); (*TODO test with not hardcoded values for heartbeat*)
+    Async.Scheduler.go ();
     Lwt_log.info "New connection" >>= return
 
 let create_socket () =
@@ -107,5 +117,6 @@ let create_server sock =
 let _ =
     let sock = create_socket () in
     let serve = create_server sock in
-    Lwt_main.run @@ serve ()
+    Lwt_main.run @@ serve ();
+
 

@@ -4,3 +4,8 @@
 #load "lwt.cma";;
 #load "core.cma";;
 #load "async.cma";;
+#directory "_build";;
+#load "request_vote_rpc.cmo";;
+#load "log.cmo";;
+#load "append_entries_rpc.cmo";;
+#directory "..";;
