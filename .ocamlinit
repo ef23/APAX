@@ -1,3 +1,6 @@
-#require "Lwt";;
-#require "Websocket";;
-#require "Websocket-lwt.cohttp";;
+#require "lwt";;
+#require "core";;
+#require "async";;
+#load "lwt.cma";;
+#load "core.cma";;
+#load "async.cma";;
