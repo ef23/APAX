@@ -65,10 +65,10 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
-let req_append_entries msg = failwith "u suck"
-let res_append_entries msg = failwith "u suck"
-let req_request_vote msg = failwith "u suck"
-let res_request_vote msg = failwith "succ my zucc"
+let req_append_entries msg ip_address_str = failwith "u suck"
+let res_append_entries msg ip_address_str = failwith "u suck"
+let req_request_vote msg ip_address_str = failwith "u suck"
+let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
 let handle_message msg =
     match msg with
