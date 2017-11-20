@@ -52,8 +52,6 @@ let change_heartbeat () =
 let update_neighbors ips = 
     serv_state := {!serv_state with neighboringIPs = ips}
 
-let transition st new_role = {st with role = new_role}
-
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
@@ -96,6 +94,19 @@ let create_server sock =
     let rec serve () =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
+
+let init_state ips = ref {
+    role = Follower;
+    currentTerm = 0;
+    votedFor = None;
+    log = [];
+    commitIndex = 0;
+    lastApplied = 0;
+    heartbeat = generate_heartbeat;
+    neighboringIPs = ips;
+    nextIndexList = [];
+    matchIndexList = [];
+}
 
 let _ =
     let sock = create_socket () in

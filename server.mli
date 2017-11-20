@@ -34,13 +34,9 @@ val init_state : string list -> state
  * candidate to a follower *)
 val change_heartbeat: unit -> unit
 
-(* [transition st r] returns a new state
- * st' where st'.role = r
- * and  *)
-val transition : state -> role -> state
 
 (* [req_append_entries str] sends an appendEntries call to another server
- * [str] is the message we want to send bc we were REQ u
+ * [str] is the message we want to send
  *)
 val req_append_entries : AppendEntriesReq.append_entries_req -> ip_address_str -> unit
 
