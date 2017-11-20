@@ -22,17 +22,17 @@ module type Log = sig
 	 * e *)
 	val remove : log -> entry -> log
 
-	(* [match e1 e2] returns -1 if e1 is a more recent entry
+	(* [match_log e1 e2] returns -1 if e1 is a more recent entry
 	 * than e2; 1 if e2 is more recent than e1; 0 if they are
 	 * the same entry *)
-	val match : entry -> entry -> int
+	val match_log : entry -> entry -> int
 
 	(* [compare e1 e2] returns true if e1 and e2 are the same entries,
 	 * false otherwise *)
 	val compare : entry -> entry -> bool
 end
-
-(* [MergeLogs (L1) (L2)] takes in two Logs and merges them *)
-module MergeLogs = functor (L1 : Log) (L2 : Log) -> struct
-end
+(* 
+	[MergeLogs (L1) (L2)] takes in two Logs and merges them
+	module MergeLogs (L1 : Log) (L2 : Log) = sig
+	end *)
 

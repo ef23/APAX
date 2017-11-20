@@ -1,3 +1,4 @@
+open Log
 (* Represents a call made by leader to replicate log entries, and is also used 
  * as heartbeat to ensure that leader is still alive and the response.
  *)
@@ -8,13 +9,13 @@
  * entries: list of entries of type 'a to store in log
  * leader_commit: leader's commit index
  *)
-module type AppendEntriesRequest = sig
-  type 'a append_entries_request = {
+module type AppendEntriesReq = sig
+  type append_entries_req = {
     term : int;
     leader_id : int;
     prev_log_index : int;
     prev_log_term : int;
-    entries : 'a list;
+    entries : entry list;
     leader_commit : int
   } 
 end
@@ -24,8 +25,8 @@ end
  * success: if the follower contained entry matching prevLogIndex and 
  * prevLogTerm
  *)
-module type AppendEntriesResponse = sig
-  type append_entries_response = {
+module type AppendEntriesRes = sig
+  type append_entries_res = {
     current_term : int;
     success : bool
   }   
