@@ -20,6 +20,7 @@ type state = {
     currentTerm : int;
     votedFor : int option;
     log : entry list;
+    lastEntry : entry option;
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
@@ -40,6 +41,7 @@ let serv_state =  ref {
     currentTerm = 0;
     votedFor = None;
     log = [];
+    lastEntry = None;
     commitIndex = 0;
     lastApplied = 0;
     heartbeat = generate_heartbeat;
@@ -103,6 +105,36 @@ let create_server sock =
     let rec serve () =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
+
+let set_term i =
+    {!serv_state with currentTerm = i}
+
+let rec send_rpcs f ips = 
+    match ips with
+    | [] -> ()
+    | ip::t -> 
+        let _ = f ip in
+        send_rpcs f t
+
+let get_entry_term e_opt = 
+    match e_opt with
+    | Some e -> e.entryTerm
+    | None -> -1
+
+let start_election () = 
+    (* increment term *)
+    let curr_term = !serv_state.currentTerm in
+    serv_state := set_term (curr_term + 1);
+
+    let neighbors = !serv_state.neighboringIPs in
+    let ballot = {
+        term = !serv_state.currentTerm;
+        candidate_id = !serv_state.id;
+        last_log_index = !serv_state.commitIndex;
+        last_log_term = get_entry_term (!serv_state.lastEntry)
+    } in
+
+    send_rpcs (req_request_vote ballot) neighbors
 
 let _ =
     let sock = create_socket () in

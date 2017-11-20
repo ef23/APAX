@@ -8,7 +8,11 @@
  * -command for the state machine
  * -term when the entry was received by the leader
  * -entry index indicating that it is the ith entry in the log *)
-type entry
+type entry = {
+  command : string;
+  entryTerm : int;
+  index : int;
+}
 
 (* abstract Log module signature; a Log must be able to manipulate
  * and compare entries. *)

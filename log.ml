@@ -1,4 +1,8 @@
-type entry
+type entry = {
+  command : string;
+  entryTerm : int;
+  index : int;
+}
 
 (* abstract Log module signature; a Log must be able to manipulate
  * and compare entries. *)
