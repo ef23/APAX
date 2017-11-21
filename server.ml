@@ -159,6 +159,14 @@ let start_election () =
 
     send_rpcs (req_request_vote ballot) neighbors
 
+(*  *)
+and let act_leader () = failwith "TODO"
+(*  *)
+and let act_candidate () = failwith "TODO"
+(*  *)
+and let act_follower () = failwith "TODO"
+
+
 let _ =
     let sock = create_socket () in
     let serve = create_server sock in
