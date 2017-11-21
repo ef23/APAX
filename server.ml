@@ -24,7 +24,7 @@ type state = {
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
-    neighboringIPs : string list;
+    neighboringIPs : (string*string) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
 }
@@ -80,7 +80,6 @@ let handle_message msg =
     | _      -> "Unknown command"
 
 let rec send_heartbeat oc () =
-    print_endline "jejejejj";
     Lwt_io.write_line oc "test"; Lwt_io.flush oc;
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
@@ -110,9 +109,31 @@ let create_socket () =
     listen sock backlog;
     sock
 
+let establish_conn server_addr  =
+  let server = "10.145.5.228" in
+        let server_addr =
+          try Unix.inet_addr_of_string server
+          with Failure("inet_addr_of_string") ->
+                 try  (Unix.gethostbyname server).Unix.h_addr_list.(0)
+                 with Not_found ->
+                        Printf.eprintf "%s : Unknown server\n" server ;
+                        exit 2
+        in try
+             let port = int_of_string ("9000") in
+             let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
+             let ic,oc = Lwt_io.open_connection sockaddr
+             in handle_connection ic oc
+        with Failure("int_of_string") -> Printf.eprintf "bad port number";
+                                            exit 2 ;;
+
 let create_server sock =
     let rec serve () =
+        (* match read_line () with
+        | str -> establish_conn str;
+ *)
+        establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
+
     in serve
 
 let set_term i =
@@ -158,6 +179,6 @@ let start_election () =
 let _ =
     let sock = create_socket () in
     let serve = create_server sock in
-    Lwt_main.run @@ serve ();
 
+    Lwt_main.run @@ serve ()
 
