@@ -8,4 +8,4 @@
 #load "request_vote_rpc.cmo";;
 #load "log.cmo";;
 #load "append_entries_rpc.cmo";;
-#directory "..";;
+#require "lwt.ppx";;
