@@ -9,6 +9,7 @@ open Lwt
 open Log
 open Request_vote_rpc
 open Append_entries_rpc
+open Yojson.Basic.Util
 
 type role = | Follower | Candidate | Leader
 
@@ -71,7 +72,10 @@ let () = Lwt_log.add_rule "*" Lwt_log.Info
 let req_append_entries msg ip_address_str = failwith "u suck"
 let res_append_entries msg ip_address_str = failwith "u suck"
 
-let req_request_vote msg ip_address_str =
+(* [build_req_vote ()] builds the json string that represents a candidate's
+ * request vote to other servers
+ *)
+let build_req_vote () =
     let cand_id = !serv_state.id in
     let term = !serv_state.currentTerm in
     match !serv_state.lastEntry with
@@ -86,21 +90,53 @@ let req_request_vote msg ip_address_str =
             "last_log_term":last_log_term
           }
         |} in json
+        (* send to server *)
     | None -> failwith "kek"
 
+let req_request_vote msg ip_address_str = failwith "u suck"
 let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
+(* [handle_vote_req msg] handles receiving a vote request message *)
+let handle_vote_req msg =
+    let candidate_id = msg |> member "candidate_id" |> to_int in
+    let continue = match !serv_state.votedFor with
+                    | None -> true
+                    | Some id -> id=candidate_id in
+    let otherTerm = msg |> member "term" |> to_int in
+    let last_log_term = msg |> member "last_log_term" |> to_int in
+    let last_log_index = msg |> member "last_log_index" |> to_int in
+    match !serv_state.lastEntry with
+    | Some log ->
+        let curr_log_ind = log.index in
+        let curr_log_term = log.entryTerm in
+        let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
+        last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
+        let json = {|
+          {
+            "current_term":!serv_state.currentTerm,
+            "vote_granted":vote_granted,
+          }
+        |} in json
+        (* send to server *)
+    | None -> failwith "kek"
+
+(* [handle_vote_res msg] handles receiving a vote response message *)
+let handle_vote_res msg =
+    let currTerm = msg |> member "current_term" |> to_int in
+    let voted = msg |> member "vote_granted" |> to_bool in
+    if voted then vote_counter := !vote_counter + 1
 
 let handle_message msg =
-    let msg_type = (* fill out this with extracting Yojson for call type *) "kek" in
+    let msg = Yojson.Basic.from_string msg in
+    let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "vote_req" -> string_of_int !vote_counter
-    | "vote_res" -> vote_counter := !vote_counter + 1; "Counter has been incremented"
+    | "vote_req" -> handle_vote_req msg
+    | "vote_res" -> handle_vote_res msg; "gug"
     | "appd_req" -> if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower};
-                    "Unknown command"
-    | "appd_res" -> "Unknown command"
-    | _ -> "Unknown command"
+                    "gug"
+    | "appd_res" -> "gug"
+    | _ -> "gug"
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "test"; Lwt_io.flush oc;
@@ -219,6 +255,8 @@ and act_leader () =
 (*  *)
 and act_candidate () =
     start_election;
+    let req_vote_json = build_req_vote () in
+    send_rpcs (req_request_vote req_vote_json) !serv_state.neighboringIPs;
 
 (*  *)
 and act_follower () = failwith "TODO"
