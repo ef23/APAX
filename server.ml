@@ -144,8 +144,8 @@ let establish_conn server_addr  =
         in try
              let port = int_of_string ("9000") in
              let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
-             let ic,oc = Lwt_io.open_connection sockaddr
-             in handle_connection ic oc
+             let%lwt ic, oc = Lwt_io.open_connection sockaddr
+             in handle_connection ic oc ()
         with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;
 
