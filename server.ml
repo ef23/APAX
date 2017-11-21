@@ -73,11 +73,15 @@ let res_append_entries msg ip_address_str = failwith "u suck"
 let req_request_vote msg ip_address_str = failwith "u suck"
 let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
+
 let handle_message msg =
-    match msg with
-    | "read" -> string_of_int !vote_counter
-    | "inc"  -> vote_counter := !vote_counter + 1; "Counter has been incremented"
-    | _      -> "Unknown command"
+    let msg_type = (* fill out this with extracting Yojson for call type *) "kek" in
+    match msg_type with
+    | "vote_req" -> string_of_int !vote_counter
+    | "vote_res" -> vote_counter := !vote_counter + 1; "Counter has been incremented"
+    | "appd_req" -> "Unknown command"
+    | "appd_res" -> "Unknown command"
+    | _ -> "Unknown command"
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "test"; Lwt_io.flush oc;
@@ -175,6 +179,29 @@ let start_election () =
     } in
 
     send_rpcs (req_request_vote ballot) neighbors
+
+let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+let rec send_all_heartbeats ips = 
+    match ips with
+    | [] -> ()
+    | h::t -> 
+        let oc = dummy_get_oc h in 
+        (* TODO defer this? *)
+        send_heartbeat oc ();
+        send_all_heartbeats t
+
+(*  *)
+and act_leader () =
+    (* periodically send heartbeats *)
+    send_all_heartbeats !serv_state.neighboringIPs;
+    (* listen for client requests *)
+
+    failwith "TODO"
+(*  *)
+and act_candidate () = failwith "TODO"
+(*  *)
+and act_follower () = failwith "TODO"
+
 
 let _ =
     let sock = create_socket () in
