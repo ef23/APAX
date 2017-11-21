@@ -75,7 +75,7 @@ let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
 
 let handle_message msg =
-    let msg_type = (* fill out this with extracting Yojson for call type *) "kek" in
+    let msg_type = (* fill out this with extracting Yojson for call type *) "vote_req" in
     match msg_type with
     | "vote_req" -> string_of_int !vote_counter
     | "vote_res" -> vote_counter := !vote_counter + 1; "Counter has been incremented"
@@ -98,6 +98,7 @@ let rec handle_connection ic oc () =
         | None -> Lwt_log.info "Connection closed" >>= return)
 
 let accept_connection conn =
+    print_endline "accepted";
     let fd, _ = conn in
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
@@ -114,7 +115,7 @@ let create_socket () =
     sock
 
 let establish_conn server_addr  =
-  let server = "10.145.5.228" in
+  let server = "10.129.21.219" in
         let server_addr =
           try Unix.inet_addr_of_string server
           with Failure("inet_addr_of_string") ->
