@@ -73,10 +73,14 @@ let res_append_entries msg ip_address_str = failwith "u suck"
 let req_request_vote msg ip_address_str = failwith "u suck"
 let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
+
 let handle_message msg =
-    match msg with
-    | "read" -> string_of_int !vote_counter
-    | "inc"  -> vote_counter := !vote_counter + 1; "Counter has been incremented"
+    let msg_type = (* fill out this with extracting Yojson for call type *) "kek" in
+    match msg_type with
+    | "vote_req" -> string_of_int !vote_counter
+    | "vote_res"  -> vote_counter := !vote_counter + 1; "Counter has been incremented"
+    | "appd_req" ->
+    | "appd_res" ->
     | _      -> "Unknown command"
 
 let rec send_heartbeat oc () =
