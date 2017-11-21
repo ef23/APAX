@@ -125,8 +125,8 @@ let establish_conn server_addr  =
         in try
              let port = int_of_string ("9000") in
              let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
-             let ic,oc = Lwt_io.open_connection sockaddr
-             in handle_connection ic oc
+             let%lwt ic, oc = Lwt_io.open_connection sockaddr
+             in handle_connection ic oc ()
         with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;
 
@@ -181,11 +181,11 @@ let start_election () =
     send_rpcs (req_request_vote ballot) neighbors
 
 let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-let rec send_all_heartbeats ips = 
+let rec send_all_heartbeats ips =
     match ips with
     | [] -> ()
-    | h::t -> 
-        let oc = dummy_get_oc h in 
+    | h::t ->
+        let oc = dummy_get_oc h in
         (* TODO defer this? *)
         send_heartbeat oc ();
         send_all_heartbeats t
