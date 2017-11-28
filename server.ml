@@ -228,9 +228,9 @@ let start_election () =
 
     let neighbors = !serv_state.neighboringIPs in
     let req_vote_json = build_req_vote () in
-    send_rpcs (req_request_vote req_vote_json) neighbors;
+    send_rpcs (req_request_vote req_vote_json) neighbors
 
-let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+(* let dummy_get_oc ip = failwith "replace with what maria and janice implement"
 let rec send_all_heartbeats ips =
     match ips with
     | [] -> ()
@@ -238,27 +238,57 @@ let rec send_all_heartbeats ips =
         let oc = dummy_get_oc h in
         (* TODO defer this? *)
         send_heartbeat oc ();
-        send_all_heartbeats t
+        send_all_heartbeats t *)
 
-(*  *)
+(* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
+let rec init_heartbeats () = ()
+
+(* [act_leader ()] executes all leader responsibilities, namely sending RPCs
+ * and listening for client requests
+ * 
+ * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
-    (* periodically send heartbeats *)
-    send_all_heartbeats !serv_state.neighboringIPs;
-    (* listen for client requests *)
+    (* start thread to periodically send heartbeats *)
+    init_heartbeats ()
+    (* TODO listen for client req and send appd_entries *)
 
-    failwith "TODO"
-(*  *)
+(* [act_candidate ()] executes all candidate responsibilities, namely sending
+ * vote requests and ending an election as a winner/loser/stall
+ *
+ * if a candidate receives a client request, they will reply with an error *)
 and act_candidate () =
     start_election;
     (* now listen for responses to the req_votes *)
+    let rec listen () =
+        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2) then
+            win_election ()
+        (* TODO this is probably not correct *)
+        else listen ()
+    in listen ()
 
-(*  *)
+(* [act_follower ()] executes all follower responsibilities, namely starting
+ * elections, responding to RPCs, and redirecting client calls to the leader
+ * 
+ * if a follower receives a client request, they will send it as a special RPC
+ * to the leader, and then receive the special RPC and reply back to the client
+ *)
 and act_follower () = failwith "TODO"
 
+(* [win_election ()] transitions the server from a candidate to a leader and 
+ * executes the appropriate actions *)
+and win_election () =
+    (* transition to Leader role *)
+    serv_state := {!serv_state with role = Leader};
+    (* send heartbeats *)
+    act_leader ()
+
+and lose_election () =
+    (* transition to Follower role *)
+    serv_state := {!serv_state with role = Follower};
+    act_follower ()
 
 let _ =
     let sock = create_socket () in
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ()
-
