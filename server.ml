@@ -261,7 +261,7 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    (*let startstuff oc = 
+    (*let startstuff oc =
     begin
         print_endline "in start stuff";
         Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc);
@@ -270,19 +270,20 @@ let accept_connection conn =
     end in
     print_endline "create before";
     (*ignore (Thread.create startstuff oc);*)*)
-    let otherl = !output_channels in 
+    let otherl = !output_channels in
     output_channels := (oc::[]);
     Lwt_log.info "New connection" >>= return
 
-let send_heartbeats = 
+let send_heartbeats () =
     let lst_o = !output_channels in
-    let rec gothrough lst = 
-      match lst with 
+    let rec gothrough lst =
+      match lst with
       | h::t -> Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat h); gothrough t;
       | [] -> () in
     gothrough lst_o; Async.Scheduler.go ()
 
 let create_socket () =
+    print_endline("kdjsfajsdf");
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
     bind sock @@ ADDR_INET(listen_address, port);
@@ -290,6 +291,7 @@ let create_socket () =
     sock
 
 let establish_conn server_addr  =
+    print_endline("asdkfjalsjdf");
   let server = "10.129.21.219" in
         let server_addr =
           try Unix.inet_addr_of_string server
@@ -311,6 +313,7 @@ let create_server sock =
         (* match read_line () with
         | str -> establish_conn str;
  *)
+        print_endline "adjkfajsdfkljajsdf";
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
@@ -374,7 +377,7 @@ and act_leader () =
     failwith "TODO"
 (*  *)
 and act_candidate () =
-    start_election;
+    start_election
     (* now listen for responses to the req_votes *)
 
 (*  *)
@@ -382,6 +385,7 @@ and act_follower () = failwith "TODO"
 
 
 let _ =
+    print_endline "ajsdfjasjdfjasjf";
     let sock = create_socket () in
     let serve = create_server sock in
 
