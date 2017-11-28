@@ -68,7 +68,6 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
-
 let req_append_entries msg ip_address_str = failwith "u suck"
 let res_append_entries msg ip_address_str = failwith "u suck"
 
@@ -179,18 +178,19 @@ and act_candidate () =
     let check_election_complete () =
         if !serv_state.role = Candidate then act_candidate (); in
     serv_state := {!serv_state with heartbeat = generate_heartbeat};
-    let candidate_job () =
-        start_election;
-        (* call act_candidate again if timer runs out *)
-        (* now listen for responses to the req_votes *)
-        let rec listen () =
-            if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
-            then win_election ()
-            (* TODO this is probably not correct *)
-            else listen ()
-        in listen (); in
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (candidate_job);
+    start_election;
+    (* call act_candidate again if timer runs out *)
+    (* now listen for responses to the req_votes *)
+    let rec listen () =
+        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
+        then win_election ()
+        (* TODO this is probably not correct *)
+        else listen ()
+    in listen ();
+
+and init_candidate () =
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
     Async.Scheduler.go ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
@@ -226,7 +226,7 @@ and terminate_election () =
 let handle_vote_res msg =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
-    if voted then vote_counter := !vote_counter + 1;
+    if voted then vote_counter := !vote_counter + 1
 
 let handle_message msg =
     let msg = Yojson.Basic.from_string msg in
