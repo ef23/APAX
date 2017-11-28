@@ -201,6 +201,8 @@ and win_election () =
     (* send heartbeats *)
     act_leader ()
 
+(* [lose_election ()] transitions the server from a candidate to a follower
+ * and executes the appropriate actions *)
 and lose_election () =
     (* transition to Follower role *)
     serv_state := {!serv_state with role = Follower};
