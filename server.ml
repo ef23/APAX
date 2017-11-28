@@ -73,28 +73,16 @@ let () = Lwt_log.add_rule "*" Lwt_log.Info
 let req_append_entries msg ip_address_str = failwith "u suck"
 let res_append_entries msg ip_address_str = failwith "u suck"
 
-(* [build_req_vote ()] builds the json string that represents a candidate's
- * request vote to other servers
- *)
-let build_req_vote () =
-    let cand_id = !serv_state.id in
-    let term = !serv_state.currentTerm in
-    match !serv_state.lastEntry with
-    | Some log ->
-        let last_log_ind = log.index in
-        let last_log_term = log.entryTerm in
-        let json = {|
-          {
-            "term":term,
-            "candidate_id":cand_id,
-            "last_log_index":last_log_ind,
-            "last_log_term":last_log_term
-          }
-        |} in json
-        (* send to server *)
-    | None -> failwith "kek"
+let req_request_vote ballot ip_address_str =
+    let json = {|
+      {
+        "term": ballot.term,
+        "candidate_id": ballot.cand_id,
+        "last_log_index": ballot.last_log_ind,
+        "last_log_term": ballot.last_log_term
+      }
+    |} in ()
 
-let req_request_vote msg ip_address_str = failwith "u suck"
 let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
 (* [handle_vote_req msg] handles receiving a vote request message *)
@@ -121,14 +109,127 @@ let handle_vote_req msg =
         (* send to server *)
     | None -> failwith "kek"
 
+let set_term i =
+    {!serv_state with currentTerm = i}
+
+(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
+let rec send_rpcs f ips =
+    match ips with
+    | [] -> ()
+    | ip::t ->
+        let _ = f ip in
+        send_rpcs f t
+
+(* [get_entry_term e_opt] takes in the value of a state's last entry option and
+ * returns the last entry's term, or -1 if there was no last entry (aka the log
+ * is empty) *)
+let get_entry_term e_opt =
+    match e_opt with
+    | Some e -> e.entryTerm
+    | None -> -1
+
+(* [start_election ()] starts the election for this server by incrementing its
+ * term and sending RequestVote RPCs to every other server in the clique *)
+let start_election () =
+    (* increment term *)
+    let curr_term = !serv_state.currentTerm in
+    serv_state := set_term (curr_term + 1);
+
+    let neighbors = !serv_state.neighboringIPs in
+    (* ballot is a vote_req *)
+    let ballot = {
+        term = !serv_state.currentTerm;
+        candidate_id = !serv_state.id;
+        last_log_index = !serv_state.commitIndex;
+        last_log_term = get_entry_term (!serv_state.lastEntry)
+    } in
+    send_rpcs (req_request_vote ballot) neighbors
+
+(* let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+let rec send_all_heartbeats ips =
+    match ips with
+    | [] -> ()
+    | h::t ->
+        let oc = dummy_get_oc h in
+        (* TODO defer this? *)
+        send_heartbeat oc ();
+        send_all_heartbeats t *)
+
+(* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
+let rec init_heartbeats () = ()
+
+(* [act_leader ()] executes all leader responsibilities, namely sending RPCs
+ * and listening for client requests
+ *
+ * if a leader receives a client request, they will process it accordingly *)
+and act_leader () =
+    (* start thread to periodically send heartbeats *)
+    init_heartbeats ()
+    (* TODO listen for client req and send appd_entries *)
+
+(* [act_candidate ()] executes all candidate responsibilities, namely sending
+ * vote requests and ending an election as a winner/loser/stall
+ *
+ * if a candidate receives a client request, they will reply with an error *)
+and act_candidate () =
+    (* if the candidate is still a follower, then start a new election
+     * otherwise terminate. *)
+    let check_election_complete () =
+        if !serv_state.role = Candidate then act_candidate (); in
+    serv_state := {!serv_state with heartbeat = generate_heartbeat};
+    let candidate_job () =
+        start_election;
+        (* call act_candidate again if timer runs out *)
+        (* now listen for responses to the req_votes *)
+        let rec listen () =
+            if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
+            then win_election ()
+            (* TODO this is probably not correct *)
+            else listen ()
+        in listen (); in
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (candidate_job);
+    Async.Scheduler.go ()
+
+(* [act_follower ()] executes all follower responsibilities, namely starting
+ * elections, responding to RPCs, and redirecting client calls to the leader
+ *
+ * if a follower receives a client request, they will send it as a special RPC
+ * to the leader, and then receive the special RPC and reply back to the client
+ *)
+and act_follower () = failwith "TODO"
+
+(* [win_election ()] transitions the server from a candidate to a leader and
+ * executes the appropriate actions *)
+and win_election () =
+    (* transition to Leader role *)
+    serv_state := {!serv_state with role = Leader};
+    (* send heartbeats *)
+    act_leader ()
+
+(* [lose_election ()] transitions the server from a candidate to a follower
+ * and executes the appropriate actions *)
+and lose_election () =
+    (* transition to Follower role *)
+    serv_state := {!serv_state with role = Follower};
+    act_follower ()
+
+(* [terminate_election ()] executes when timeout occurs in the middle of an
+ * election with no resolution (i.e. no one wins or loses) *)
+and terminate_election () =
+    change_heartbeat ();
+    start_election ()
+
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
-    if voted then vote_counter := !vote_counter + 1
+    if voted then vote_counter := !vote_counter + 1;
 
 let handle_message msg =
-
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
@@ -211,9 +312,9 @@ let create_server sock =
  *)
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
-
     in serve
 
+<<<<<<< HEAD
 let set_term i =
     {!serv_state with currentTerm = i}
 
