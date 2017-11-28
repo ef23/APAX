@@ -62,6 +62,8 @@ let update_neighbors ips id =
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
+let output_channels = ref []
+
 let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
@@ -259,9 +261,26 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc); (*TODO test with not hardcoded values for heartbeat*)
-    Async.Scheduler.go ();
+    (*let startstuff oc = 
+    begin
+        print_endline "in start stuff";
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc);
+        print_endline "helo i'm after";
+        Async.Scheduler.go ();
+    end in
+    print_endline "create before";
+    (*ignore (Thread.create startstuff oc);*)*)
+    let otherl = !output_channels in 
+    output_channels := (oc::[]);
     Lwt_log.info "New connection" >>= return
+
+let send_heartbeats = 
+    let lst_o = !output_channels in
+    let rec gothrough lst = 
+      match lst with 
+      | h::t -> Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat h); gothrough t;
+      | [] -> () in
+    gothrough lst_o; Async.Scheduler.go ()
 
 let create_socket () =
     let open Lwt_unix in
@@ -295,6 +314,66 @@ let create_server sock =
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
+
+let set_term i =
+    {!serv_state with currentTerm = i}
+
+(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
+let rec send_rpcs f ips =
+    match ips with
+    | [] -> ()
+    | ip::t ->
+        let _ = f ip in
+        send_rpcs f t
+
+(* [get_entry_term e_opt] takes in the value of a state's last entry option and
+ * returns the last entry's term, or -1 if there was no last entry (aka the log
+ * is empty) *)
+let get_entry_term e_opt =
+    match e_opt with
+    | Some e -> e.entryTerm
+    | None -> -1
+
+(* [start_election ()] starts the election for this server by incrementing its
+ * term and sending RequestVote RPCs to every other server in the clique *)
+let start_election () =
+    (* increment term *)
+    let curr_term = !serv_state.currentTerm in
+    serv_state := set_term (curr_term + 1);
+
+    let neighbors = !serv_state.neighboringIPs in
+    let req_vote_json = build_req_vote () in
+    send_rpcs (req_request_vote req_vote_json) neighbors
+
+let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+
+let rec send_all_heartbeats ips =
+    match ips with
+    | [] -> ()
+    | h::t ->
+        let oc = dummy_get_oc h in
+        (* TODO defer this? *)
+        send_heartbeat oc ();
+        send_all_heartbeats t
+
+(*  *)
+and act_leader () =
+    (* periodically send heartbeats *)
+    send_all_heartbeats !serv_state.neighboringIPs;
+    (* listen for client requests *)
+
+    failwith "TODO"
+(*  *)
+and act_candidate () =
+    start_election;
+    (* now listen for responses to the req_votes *)
+
+(*  *)
+and act_follower () = failwith "TODO"
+
 
 let _ =
     let sock = create_socket () in

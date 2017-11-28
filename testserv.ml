@@ -61,22 +61,23 @@ let create_socket () =
     listen sock backlog;
     sock
 
+(*client *)
 let establish_conn server_addr  =
-  let server = "10.129.21.219" in
-        let server_addr =
-          try Unix.inet_addr_of_string server
-          with Failure("inet_addr_of_string") ->
-                 try  (Unix.gethostbyname server).Unix.h_addr_list.(0)
-                 with Not_found ->
-                        Printf.eprintf "%s : Unknown server\n" server ;
-                        exit 2
-        in try
-             let port = int_of_string ("9000") in
-             let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
-             let%lwt ic, oc = Lwt_io.open_connection sockaddr
-             in handle_connection ic oc ()
-        with Failure("int_of_string") -> Printf.eprintf "bad port number";
-                                            exit 2 ;;
+  let server = "10.148.2.207" in
+    let server_addr =
+      try Unix.inet_addr_of_string server
+      with Failure("inet_addr_of_string") ->
+             try  (Unix.gethostbyname server).Unix.h_addr_list.(0)
+             with Not_found ->
+                    Printf.eprintf "%s : Unknown server\n" server ;
+                    exit 2
+    in try
+         let port = int_of_string ("9000") in
+         let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
+         let%lwt ic, oc = Lwt_io.open_connection sockaddr
+         in handle_connection ic oc ()
+    with Failure("int_of_string") -> Printf.eprintf "bad port number";
+                                        exit 2 ;;
 
 let create_server sock =
     let rec serve () =
