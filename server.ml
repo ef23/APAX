@@ -214,15 +214,8 @@ let start_election () =
     serv_state := set_term (curr_term + 1);
 
     let neighbors = !serv_state.neighboringIPs in
-    (* ballot is a vote_req *)
-    let ballot = {
-        term = !serv_state.currentTerm;
-        candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
-    } in
-
-    send_rpcs (req_request_vote ballot) neighbors
+    let req_vote_json = build_req_vote () in
+    send_rpcs (req_request_vote req_vote_json) neighbors;
 
 let dummy_get_oc ip = failwith "replace with what maria and janice implement"
 let rec send_all_heartbeats ips =
@@ -246,6 +239,7 @@ and act_candidate () =
     serv_state := {!serv_state with heartbeat = generate_heartbeat};
     start_election;
     (* call act_candidate again if timer runs out *)
+    (* now listen for responses to the req_votes *)
 
 (*  *)
 and act_follower () = failwith "TODO"
