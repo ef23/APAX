@@ -314,7 +314,6 @@ let create_server sock =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
-<<<<<<< HEAD
 let set_term i =
     {!serv_state with currentTerm = i}
 
