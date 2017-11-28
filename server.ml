@@ -174,16 +174,24 @@ and act_leader () =
  *
  * if a candidate receives a client request, they will reply with an error *)
 and act_candidate () =
+    (* if the candidate is still a follower, then start a new election
+     * otherwise terminate. *)
+    let check_election_complete () =
+        if !serv_state.role = Candidate then act_candidate (); in
     serv_state := {!serv_state with heartbeat = generate_heartbeat};
-    start_election;
-    (* call act_candidate again if timer runs out *)
-    (* now listen for responses to the req_votes *)
-    let rec listen () =
-        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2) then
-            win_election ()
-        (* TODO this is probably not correct *)
-        else listen ()
-    in listen ()
+    let candidate_job () =
+        start_election;
+        (* call act_candidate again if timer runs out *)
+        (* now listen for responses to the req_votes *)
+        let rec listen () =
+            if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
+            then win_election ()
+            (* TODO this is probably not correct *)
+            else listen ()
+        in listen (); in
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (candidate_job);
+    Async.Scheduler.go ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -219,11 +227,8 @@ let handle_vote_res msg =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1;
-    let majority = ((List.length !serv_state.neighboringIPs) / 2) + 1 in
-    if !vote_counter >= majority then win_election ()
 
 let handle_message msg =
-
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
@@ -234,7 +239,6 @@ let handle_message msg =
                     "gug"
     | "appd_res" -> "gug"
     | _ -> "gug"
-
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "test"; Lwt_io.flush oc;
