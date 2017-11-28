@@ -276,6 +276,12 @@ and lose_election () =
     serv_state := {!serv_state with role = Follower};
     act_follower ()
 
+(* [terminate_election ()] executes when timeout occurs in the middle of an
+ * election with no resolution (i.e. no one wins or loses) *)
+and terminate_election () =
+    change_heartbeat ();
+    start_election ()
+
 let _ =
     let sock = create_socket () in
     let serve = create_server sock in
