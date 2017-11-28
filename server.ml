@@ -230,10 +230,29 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
+let rec send_heartbeat oc () =
+    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+
+let send_heartbeats () =
+    let lst_o = !output_channels in
+    let rec gothrough lst =
+      match lst with
+      | h::t -> 
+        begin
+        let hello oc_in = 
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in); 
+        in
+        ignore (Thread.create hello h); gothrough t;
+        end
+      | [] -> () in
+    gothrough lst_o; Async.Scheduler.go ()
+
 let handle_message msg =
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
+    | "sendall" -> send_heartbeats (); "gug"
     | "vote_req" -> handle_vote_req msg
     | "vote_res" -> handle_vote_res msg; "gug"
     | "appd_req" -> if !serv_state.role = Candidate
@@ -242,9 +261,6 @@ let handle_message msg =
     | "appd_res" -> "gug"
     | _ -> "gug"
 
-let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -261,29 +277,11 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    (*let startstuff oc =
-    begin
-        print_endline "in start stuff";
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc);
-        print_endline "helo i'm after";
-        Async.Scheduler.go ();
-    end in
-    print_endline "create before";
-    (*ignore (Thread.create startstuff oc);*)*)
     let otherl = !output_channels in
-    output_channels := (oc::[]);
+    output_channels := (oc::otherl);
     Lwt_log.info "New connection" >>= return
 
-let send_heartbeats () =
-    let lst_o = !output_channels in
-    let rec gothrough lst =
-      match lst with
-      | h::t -> Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat h); gothrough t;
-      | [] -> () in
-    gothrough lst_o; Async.Scheduler.go ()
-
 let create_socket () =
-    print_endline("kdjsfajsdf");
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
     bind sock @@ ADDR_INET(listen_address, port);
@@ -291,7 +289,6 @@ let create_socket () =
     sock
 
 let establish_conn server_addr  =
-    print_endline("asdkfjalsjdf");
   let server = "10.129.21.219" in
         let server_addr =
           try Unix.inet_addr_of_string server
@@ -313,7 +310,6 @@ let create_server sock =
         (* match read_line () with
         | str -> establish_conn str;
  *)
-        print_endline "adjkfajsdfkljajsdf";
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
