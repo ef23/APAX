@@ -62,12 +62,13 @@ let update_neighbors ips id =
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
+let output_channels = ref []
+
 let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
-
 
 let req_append_entries msg ip_address_str = failwith "u suck"
 let res_append_entries msg ip_address_str = failwith "u suck"
@@ -143,7 +144,6 @@ let rec send_heartbeat oc () =
     Lwt_io.write_line oc "test"; Lwt_io.flush oc;
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
-
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
@@ -159,9 +159,26 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc); (*TODO test with not hardcoded values for heartbeat*)
-    Async.Scheduler.go ();
+    (*let startstuff oc = 
+    begin
+        print_endline "in start stuff";
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc);
+        print_endline "helo i'm after";
+        Async.Scheduler.go ();
+    end in
+    print_endline "create before";
+    (*ignore (Thread.create startstuff oc);*)*)
+    let otherl = !output_channels in 
+    output_channels := (oc::[]);
     Lwt_log.info "New connection" >>= return
+
+let send_heartbeats = 
+    let lst_o = !output_channels in
+    let rec gothrough lst = 
+      match lst with 
+      | h::t -> Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat h); gothrough t;
+      | [] -> () in
+    gothrough lst_o; Async.Scheduler.go ()
 
 let create_socket () =
     let open Lwt_unix in
@@ -228,9 +245,10 @@ let start_election () =
 
     let neighbors = !serv_state.neighboringIPs in
     let req_vote_json = build_req_vote () in
-    send_rpcs (req_request_vote req_vote_json) neighbors;
+    send_rpcs (req_request_vote req_vote_json) neighbors
 
 let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+
 let rec send_all_heartbeats ips =
     match ips with
     | [] -> ()
@@ -261,4 +279,3 @@ let _ =
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ()
-
