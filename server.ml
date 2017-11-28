@@ -72,28 +72,15 @@ let () = Lwt_log.add_rule "*" Lwt_log.Info
 let req_append_entries msg ip_address_str = failwith "u suck"
 let res_append_entries msg ip_address_str = failwith "u suck"
 
-(* [build_req_vote ()] builds the json string that represents a candidate's
- * request vote to other servers
- *)
-let build_req_vote () =
-    let cand_id = !serv_state.id in
-    let term = !serv_state.currentTerm in
-    match !serv_state.lastEntry with
-    | Some log ->
-        let last_log_ind = log.index in
-        let last_log_term = log.entryTerm in
-        let json = {|
-          {
-            "term":term,
-            "candidate_id":cand_id,
-            "last_log_index":last_log_ind,
-            "last_log_term":last_log_term
-          }
-        |} in json
-        (* send to server *)
-    | None -> failwith "kek"
-
-let req_request_vote msg ip_address_str = failwith "u suck"
+let req_request_vote ballot ip_address_str =
+    let json = {|
+      {
+        "term": ballot.term,
+        "candidate_id": ballot.cand_id,
+        "last_log_index": ballot.last_log_ind,
+        "last_log_term": ballot.last_log_term
+      }
+    |} in ()
 let res_request_vote msg ip_address_str = failwith "succ my zucc"
 
 (* [handle_vote_req msg] handles receiving a vote request message *)
@@ -256,9 +243,9 @@ and act_leader () =
     failwith "TODO"
 (*  *)
 and act_candidate () =
+    serv_state := {!serv_state with heartbeat = generate_heartbeat};
     start_election;
-    let req_vote_json = build_req_vote () in
-    send_rpcs (req_request_vote req_vote_json) !serv_state.neighboringIPs;
+    (* call act_candidate again if timer runs out *)
 
 (*  *)
 and act_follower () = failwith "TODO"
