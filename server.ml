@@ -380,32 +380,6 @@ let start_election () =
     } in
     send_rpcs (req_request_vote ballot) neighbors
 
-let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t
-
-(*  *)
-and act_leader () =
-
-
-    (* listen for client requests *)
-
-    failwith "TODO"
-(*  *)
-and act_candidate () =
-    start_election
-    (* now listen for responses to the req_votes *)
-
-(*  *)
-and act_follower () = failwith "TODO"
-
 let _ =
     read_neighoring_ips ();
     let sock = create_socket () in
