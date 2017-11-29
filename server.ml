@@ -28,6 +28,7 @@ type state = {
     neighboringIPs : (string*string) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
+    internal_timer : int;
 }
 
 (* the lower range of the election timeout, in this case 150-300ms*)
@@ -49,12 +50,22 @@ let serv_state =  ref {
     neighboringIPs = [];
     nextIndexList = [];
     matchIndexList = [];
+    internal_timer = 0;
 }
 
 let vote_counter = ref 0
 
 let change_heartbeat () =
-    serv_state := {!serv_state with heartbeat = generate_heartbeat}
+    let new_heartbeat = generate_heartbeat in
+    serv_state := {!serv_state with
+            heartbeat = new_heartbeat;
+            internal_timer = new_heartbeat;
+        }
+
+let dec_timer () = serv_state :=
+    {
+        !serv_state with internal_timer = (!serv_state.internal_timer - 1);
+    }
 
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
@@ -180,14 +191,14 @@ and act_candidate () =
     let check_election_complete () =
         if !serv_state.role = Candidate then act_candidate (); in
 
-    let rec check_win_election () = 
+    let rec check_win_election () =
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
             then win_election ()
         else
             check_win_election () in
 
     (* call act_candidate again if timer runs out *)
-    serv_state := {!serv_state with heartbeat = generate_heartbeat};
+    change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
     start_election;
 
@@ -198,6 +209,7 @@ and act_candidate () =
 
 and init_candidate () =
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
+    (* TODO: move this somewhere else *)
     Async.Scheduler.go ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
@@ -206,7 +218,11 @@ and init_candidate () =
  * if a follower receives a client request, they will send it as a special RPC
  * to the leader, and then receive the special RPC and reply back to the client
  *)
-and act_follower () = failwith "TODO"
+and act_follower () =
+    if !serv_state.internal_timer=0 && !serv_state.votedFor<>None
+    then (serv_state := {!serv_state with role=Candidate}; act_candidate ())
+    else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
+        ((dec_timer (); act_follower))
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -243,10 +259,10 @@ let send_heartbeats () =
     let lst_o = !output_channels in
     let rec gothrough lst =
       match lst with
-      | h::t -> 
+      | h::t ->
         begin
-        let hello oc_in = 
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in); 
+        let hello oc_in =
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in);
         in
         ignore (Thread.create hello h); gothrough t;
         end
@@ -254,6 +270,7 @@ let send_heartbeats () =
     gothrough lst_o; Async.Scheduler.go ()
 
 let handle_message msg =
+    serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
