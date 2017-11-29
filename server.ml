@@ -169,17 +169,17 @@ let rec send_heartbeat oc () =
 
 let send_heartbeats () =
     let lst_o = !output_channels in
-    let rec gothrough lst =
+    let rec send_to_ocs lst =
       match lst with
       | h::t ->
         begin
-        let hello oc_in =
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in);
-        in
-        ignore (Thread.create hello h); gothrough t;
+          let start_timer oc_in =
+          Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
+          in
+          ignore (Thread.create start_timer h); send_to_ocs t;
         end
       | [] -> () in
-    gothrough lst_o; Async.Scheduler.go ()
+    send_to_ocs lst_o; Async.Scheduler.go ()
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
@@ -227,16 +227,18 @@ and act_candidate () =
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
-    start_election;
+    start_election ();
 
     (* now listen for responses to the req_votes *)
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
     ()
 
 and init_candidate () =
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
-    (* TODO: move this somewhere else *)
-    Async.Scheduler.go ()
+    let start_listening act_new_role =
+    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
+    Async.Scheduler.go ()) in
+    Thread.create start_listening act_candidate; ()
+
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -246,9 +248,15 @@ and init_candidate () =
  *)
 and act_follower () =
     if !serv_state.internal_timer=0 && !serv_state.votedFor<>None
-    then (serv_state := {!serv_state with role=Candidate}; act_candidate ())
+    then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
     else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
         ((dec_timer (); act_follower))
+
+and init_follower () =
+    let start_listening act_new_role =
+    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
+    Async.Scheduler.go ()) in
+    Thread.create start_listening act_follower; ()
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
