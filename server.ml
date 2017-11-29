@@ -35,7 +35,7 @@ let generate_heartbeat =
     let range = 150 in
     (Random.int range) + lower
 
-let serv_state =  ref {
+let serv_state = ref {
     id = -1;
     role = Follower;
     currentTerm = 0;
@@ -44,7 +44,7 @@ let serv_state =  ref {
     lastEntry = None;
     commitIndex = 0;
     lastApplied = 0;
-    heartbeat = generate_heartbeat;
+    heartbeat = 0;
     neighboringIPs = [];
     nextIndexList = [];
     matchIndexList = [];
@@ -79,6 +79,7 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
+(* LOG REPLICATIONS *)
 let req_append_entries msg oc = failwith "u suck"
 let res_append_entries msg oc = failwith "u suck"
 
@@ -139,9 +140,27 @@ let get_entry_term e_opt =
     | Some e -> e.entryTerm
     | None -> -1
 
+let rec send_heartbeat oc () =
+    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+
+let send_heartbeats () =
+    let lst_o = !output_channels in
+    let rec gothrough lst =
+      match lst with
+      | h::t ->
+        begin
+        let hello oc_in =
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in);
+        in
+        ignore (Thread.create hello h); gothrough t;
+        end
+      | [] -> () in
+    gothrough lst_o; Async.Scheduler.go ()
+
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
-let start_election () =
+let rec start_election () =
     (* increment term *)
     let curr_term = !serv_state.currentTerm in
     serv_state := set_term (curr_term + 1);
@@ -156,16 +175,14 @@ let start_election () =
     } in
     send_rpcs (req_request_vote ballot) neighbors
 
-(* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
-let rec init_heartbeats () = ()
-
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
  *
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
     (* start thread to periodically send heartbeats *)
-    init_heartbeats ()
+    send_heartbeats ()
+    (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
@@ -176,7 +193,7 @@ and act_candidate () =
     (* if the candidate is still a follower, then start a new election
      * otherwise terminate. *)
     let check_election_complete () =
-        if !serv_state.role = Candidate then act_candidate (); in
+        if !serv_state.role = Candidate then act_candidate () in
 
     let rec check_win_election () =
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
@@ -192,7 +209,6 @@ and act_candidate () =
     (* now listen for responses to the req_votes *)
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
     ()
-
 
 and init_candidate () =
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
@@ -217,7 +233,7 @@ and win_election () =
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
-    act_leader ()
+    act_leader (); ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
@@ -238,24 +254,6 @@ let handle_vote_res msg hi =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
-let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
-
-let send_heartbeats () =
-    let lst_o = !output_channels in
-    let rec gothrough lst =
-      match lst with
-      | h::t ->
-        begin
-        let hello oc_in =
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in);
-        in
-        ignore (Thread.create hello h); gothrough t;
-        end
-      | [] -> () in
-    gothrough lst_o; Async.Scheduler.go ()
-
 let handle_message msg oc =
     serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
@@ -268,6 +266,9 @@ let handle_message msg oc =
                     then serv_state := {!serv_state with role = Follower}; ()
     | "appd_res" -> ()
     | _ -> ()
+
+let init_server () =
+    change_heartbeat ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
