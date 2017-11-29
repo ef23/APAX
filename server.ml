@@ -200,7 +200,7 @@ and act_candidate () =
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
-    start_election;
+    start_election ();
 
     (* now listen for responses to the req_votes *)
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
