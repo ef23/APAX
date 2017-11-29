@@ -52,7 +52,10 @@ let serv_state = ref {
 }
 
 
-let read_neighoring_ips () =
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+let read_neighboring_ips port_num =
   let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
   let port_regex = "\:[0-9]*" in
   let port_regex = "[0-9]" in
@@ -65,8 +68,11 @@ let read_neighoring_ips () =
       let ip_len = String.length ip_str in
       let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
       let new_ip = (ip_str, port_int) in
-      let updated_ips = new_ip::!serv_state.neighboringIPs in
-      serv_state := {!serv_state with neighboringIPs = updated_ips};
+      if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
+        let updated_ips = new_ip::!serv_state.neighboringIPs in
+        serv_state := {!serv_state with neighboringIPs = updated_ips};
+      else
+        ();
       process_file f_channel
     with
     | End_of_file -> Pervasives.close_in f_channel; ()
@@ -92,8 +98,6 @@ let dec_timer () = serv_state :=
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
 
-let get_my_addr () =
-    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let output_channels = ref []
 
@@ -302,7 +306,7 @@ let handle_message msg oc =
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "heartbeat" -> print_endline "this is a heart"; 
+    | "heartbeat" -> print_endline "this is a heart";
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
     | "vote_res" -> handle_vote_res msg oc; ()
@@ -312,7 +316,7 @@ let handle_message msg oc =
     | _ -> ()
 
 
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *                                                                           *
  *                                                                           *
  * EVERYTHING AFTER THIS POINT IS NETWORKING/SERVER STUFF WHICH IS GENERALLY *
@@ -351,7 +355,7 @@ let accept_connection conn =
 
 (* this will be filled in the beginning *)
 
-let rec query_server ic oc = 
+let rec query_server ic oc =
   try
     print_string  "Request : ";
     print_string (string_of_float (Unix.time ()));
@@ -368,7 +372,7 @@ let rec query_server ic oc =
     | Exit -> exit 0
     | exn -> Unix.shutdown_connection ic ; raise exn
 
-let create_socket portnum () = 
+let create_socket portnum () =
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
     bind sock @@ ADDR_INET(listen_address, portnum);
@@ -376,10 +380,10 @@ let create_socket portnum () =
     sock
 
 let main_client address portnum =
-    try 
+    try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
-        let%lwt ic, oc = Lwt_io.open_connection sockaddr in 
+        let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !output_channels in
              output_channels := (oc::otherl);
         Lwt_log.info "added connection" >>= return
@@ -389,12 +393,12 @@ let main_client address portnum =
 
 let establish_connections_to_others () =
     print_endline "establish";
-    let ip_ports_list = !serv_state.neighboringIPs in 
-    let rec get_connections lst = 
-        match lst with 
+    let ip_ports_list = !serv_state.neighboringIPs in
+    let rec get_connections lst =
+        match lst with
         | [] -> ()
-        | (ip_addr, portnum)::t -> 
-        begin 
+        | (ip_addr, portnum)::t ->
+        begin
             print_endline "in begin";
             main_client ip_addr portnum;
             get_connections t;
@@ -406,23 +410,23 @@ let create_server sock =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
-let doboth () =
-    read_neighoring_ips () |> establish_connections_to_others |>
-    send_heartbeats ;;
+(* let doboth () =
+    read_neighboring_ips () |> establish_connections_to_others |>
+    send_heartbeats ;; *)
 
-let startserver portnum =
+let startserver port_num =
     print_endline "ajsdfjasjdfjasjf";
-    read_neighoring_ips ();
-    let sock = create_socket portnum () in
+    read_neighboring_ips port_num;
+    let sock = create_socket port_num () in
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ();;
 
-let startserverest portnum =
+let startserverest port_num =
     print_endline "ajsdfjasjdfjasjf";
-    read_neighoring_ips ();
+    read_neighboring_ips port_num;
     establish_connections_to_others ();
-    let sock = create_socket portnum () in
+    let sock = create_socket port_num () in
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ();;
