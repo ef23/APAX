@@ -13,8 +13,6 @@ open Yojson.Basic.Util
 
 type role = | Follower | Candidate | Leader
 
-type ip_address_str = string
-
 type state = {
     id : int;
     role : role;
@@ -25,9 +23,10 @@ type state = {
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
-    neighboringIPs : (string*string) list; (* ip * port *)
+    neighboringIPs : (string*int) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
+    internal_timer : int;
 }
 
 (* the lower range of the election timeout, in this case 150-300ms*)
@@ -36,7 +35,7 @@ let generate_heartbeat =
     let range = 150 in
     (Random.int range) + lower
 
-let serv_state =  ref {
+let serv_state = ref {
     id = -1;
     role = Follower;
     currentTerm = 0;
@@ -45,16 +44,50 @@ let serv_state =  ref {
     lastEntry = None;
     commitIndex = 0;
     lastApplied = 0;
-    heartbeat = generate_heartbeat;
+    heartbeat = 0;
     neighboringIPs = [];
     nextIndexList = [];
     matchIndexList = [];
+    internal_timer = 0;
 }
+
+
+let read_neighoring_ips () =
+  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let port_regex = "\:[0-9]*" in
+  let port_regex = "[0-9]" in
+  let rec process_file f_channel =
+    try
+      let line = Pervasives.input_line f_channel in
+      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
+      let ip_str = Str.matched_string line in
+      let _ = Str.search_forward (Str.regexp port_regex) line 0 in
+      let ip_len = String.length ip_str in
+      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
+      let new_ip = (ip_str, port_int) in
+      let updated_ips = new_ip::!serv_state.neighboringIPs in
+      serv_state := {!serv_state with neighboringIPs = updated_ips};
+      process_file f_channel
+    with
+    | End_of_file -> Pervasives.close_in f_channel; ()
+  in
+  process_file (Pervasives.open_in "ips")
+
+let curr_role_thr = ref (Thread.create (fun _ -> ()) ())
 
 let vote_counter = ref 0
 
 let change_heartbeat () =
-    serv_state := {!serv_state with heartbeat = generate_heartbeat}
+    let new_heartbeat = generate_heartbeat in
+    serv_state := {!serv_state with
+            heartbeat = new_heartbeat;
+            internal_timer = new_heartbeat;
+        }
+
+let dec_timer () = serv_state :=
+    {
+        !serv_state with internal_timer = (!serv_state.internal_timer - 1);
+    }
 
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
@@ -70,10 +103,11 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
-let req_append_entries msg ip_address_str = failwith "u suck"
-let res_append_entries msg ip_address_str = failwith "u suck"
+(* LOG REPLICATIONS *)
+let req_append_entries msg oc = failwith "u suck"
+let res_append_entries msg oc = failwith "u suck"
 
-let req_request_vote ballot ip_address_str =
+let req_request_vote ballot oc =
     let json = {|
       {
         "term": ballot.term,
@@ -83,10 +117,10 @@ let req_request_vote ballot ip_address_str =
       }
     |} in ()
 
-let res_request_vote msg ip_address_str = failwith "succ my zucc"
+let res_request_vote msg oc = failwith "succ my zucc"
 
 (* [handle_vote_req msg] handles receiving a vote request message *)
-let handle_vote_req msg =
+let handle_vote_req msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_int in
     let continue = match !serv_state.votedFor with
                     | None -> true
@@ -105,8 +139,7 @@ let handle_vote_req msg =
             "current_term":!serv_state.currentTerm,
             "vote_granted":vote_granted,
           }
-        |} in json
-        (* send to server *)
+        |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
     | None -> failwith "kek"
 
 
@@ -132,9 +165,31 @@ let get_entry_term e_opt =
     | Some e -> e.entryTerm
     | None -> -1
 
+let rec send_heartbeat oc () =
+    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+
+let send_heartbeats () =
+    let lst_o = !output_channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | h::t ->
+        begin
+          let start_timer oc_in =
+          Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
+          in
+          ignore (Thread.create start_timer h); send_to_ocs t;
+        end
+      | [] -> () in
+    send_to_ocs lst_o; Async.Scheduler.go ()
+
+let start_listening act_new_role =
+    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
+    Async.Scheduler.go ())
+
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
-let start_election () =
+let rec start_election () =
     (* increment term *)
     let curr_term = !serv_state.currentTerm in
     serv_state := set_term (curr_term + 1);
@@ -149,27 +204,19 @@ let start_election () =
     } in
     send_rpcs (req_request_vote ballot) neighbors
 
-(* let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t *)
-
-(* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
-let rec init_heartbeats () = ()
-
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
  *
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
     (* start thread to periodically send heartbeats *)
-    init_heartbeats ()
+    send_heartbeats (); ()
+    (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
+and init_leader () =
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_leader; ()
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -179,22 +226,27 @@ and act_candidate () =
     (* if the candidate is still a follower, then start a new election
      * otherwise terminate. *)
     let check_election_complete () =
-        if !serv_state.role = Candidate then act_candidate (); in
-    serv_state := {!serv_state with heartbeat = generate_heartbeat};
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
-    start_election;
-    (* call act_candidate again if timer runs out *)
-    (* now listen for responses to the req_votes *)
-    let rec listen () =
+        if !serv_state.role = Candidate then act_candidate () in
+
+    let rec check_win_election () =
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
-        then win_election ()
-        (* TODO this is probably not correct *)
-        else listen ()
-    in listen ();
+            then win_election ()
+        else
+            check_win_election () in
+
+    (* call act_candidate again if timer runs out *)
+    change_heartbeat ();
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
+    start_election ();
+
+    (* now listen for responses to the req_votes *)
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
+    ()
 
 and init_candidate () =
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
-    Async.Scheduler.go ()
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_candidate; ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -202,7 +254,16 @@ and init_candidate () =
  * if a follower receives a client request, they will send it as a special RPC
  * to the leader, and then receive the special RPC and reply back to the client
  *)
-and act_follower () = failwith "TODO"
+and act_follower () =
+    if !serv_state.internal_timer=0 && !serv_state.votedFor<>None
+    then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
+    else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
+        ((dec_timer (); act_follower))
+
+and init_follower () =
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_follower; ()
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -210,7 +271,7 @@ and win_election () =
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
-    act_leader ()
+    init_leader (); ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
@@ -226,49 +287,36 @@ and terminate_election () =
     start_election ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
-let handle_vote_res msg =
+let handle_vote_res msg hi =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
-let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
-
-let send_heartbeats () =
-    let lst_o = !output_channels in
-    let rec gothrough lst =
-      match lst with
-      | h::t -> 
-        begin
-        let hello oc_in = 
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in); 
-        in
-        ignore (Thread.create hello h); gothrough t;
-        end
-      | [] -> () in
-    gothrough lst_o; Async.Scheduler.go ()
-
-let handle_message msg =
+let handle_message msg oc =
+    serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "sendall" -> send_heartbeats (); "gug"
-    | "vote_req" -> handle_vote_req msg
-    | "vote_res" -> handle_vote_res msg; "gug"
+    | "sendall" -> send_heartbeats (); ()
+    | "vote_req" -> handle_vote_req msg oc; ()
+    | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower};
-                    "gug"
-    | "appd_res" -> "gug"
-    | _ -> "gug"
+                    then serv_state := {!serv_state with role = Follower}; ()
+    | "appd_res" -> ()
+    | _ -> ()
+
+let init_server () =
+    (* TODO change id of server s*)
+    change_heartbeat ();
+    init_follower ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
         match msg with
-        | Some msg ->
-            let reply = handle_message msg in
-            Lwt_io.write_line oc reply >>= handle_connection ic oc
+        | Some m ->
+            handle_message m oc;
+            (handle_connection ic oc) ();
         | None -> Lwt_log.info "Connection closed" >>= return)
 
 let accept_connection conn =
@@ -317,15 +365,22 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
-let main_client address portnum : unit =
+let main_client address portnum =
+    try 
+        let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
+        let%lwt ic, oc = Lwt_io.open_connection sockaddr in 
+        ()
+    with
+        Failure("int_of_string") -> Printf.eprintf "bad port number";
+                                        exit 2 ;;
+
+
+
     (*let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
     bind sock @@ ADDR_INET(Unix.inet_addr_of_string address, portnum);
     listen sock backlog;
     let oc = Lwt_io.of_fd Lwt_io.Output sock in *)
-    let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
-    (*let%lwt ic, oc = Lwt_io.open_connection sockaddr in *)
-    ()
     (*let otherl = !output_channels in
     output_channels := (oc::otherl)*)
     (*file descriptor*)
@@ -369,9 +424,6 @@ let establish_connections_to_others () =
 
 let create_server sock =
     let rec serve () =
-        (* match read_line () with
-        | str -> establish_conn str;
- *)
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
@@ -444,6 +496,11 @@ and act_follower () = failwith "TODO"
 let startserver portnum establish =
     print_endline "ajsdfjasjdfjasjf";
     let sock = create_socket portnum () in
+(*=======
+let _ =
+    read_neighoring_ips ();
+    let sock = create_socket () in
+>>>>>>> b29e4a6f6e0866676a90d5b4eafec892081010d7*)
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ();
