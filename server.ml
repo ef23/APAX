@@ -363,23 +363,6 @@ let get_entry_term e_opt =
     | Some e -> e.entryTerm
     | None -> -1
 
-(* [start_election ()] starts the election for this server by incrementing its
- * term and sending RequestVote RPCs to every other server in the clique *)
-let start_election () =
-    (* increment term *)
-    let curr_term = !serv_state.currentTerm in
-    serv_state := set_term (curr_term + 1);
-
-    let neighbors = !serv_state.neighboringIPs in
-    (* ballot is a vote_req *)
-    let ballot = {
-        term = !serv_state.currentTerm;
-        candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
-    } in
-    send_rpcs (req_request_vote ballot) neighbors
-
 let _ =
     read_neighoring_ips ();
     let sock = create_socket () in
