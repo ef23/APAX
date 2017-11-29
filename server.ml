@@ -179,17 +179,22 @@ and act_candidate () =
      * otherwise terminate. *)
     let check_election_complete () =
         if !serv_state.role = Candidate then act_candidate (); in
+
+    let rec check_win_election () = 
+        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
+            then win_election ()
+        else
+            check_win_election () in
+
+    (* call act_candidate again if timer runs out *)
     serv_state := {!serv_state with heartbeat = generate_heartbeat};
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
     start_election;
-    (* call act_candidate again if timer runs out *)
+
     (* now listen for responses to the req_votes *)
-    let rec listen () =
-        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
-        then win_election ()
-        (* TODO this is probably not correct *)
-        else listen ()
-    in listen ();
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
+    ()
+
 
 and init_candidate () =
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
