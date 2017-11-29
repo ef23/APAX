@@ -73,6 +73,7 @@ let read_neighoring_ips () =
   in
   process_file (Pervasives.open_in "ips")
 
+let curr_role_thr = ref (Thread.create (fun _ -> ()) ())
 
 let vote_counter = ref 0
 
@@ -181,6 +182,10 @@ let send_heartbeats () =
       | [] -> () in
     send_to_ocs lst_o; Async.Scheduler.go ()
 
+let start_listening act_new_role =
+    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
+    Async.Scheduler.go ())
+
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
@@ -204,9 +209,13 @@ let rec start_election () =
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
     (* start thread to periodically send heartbeats *)
-    send_heartbeats ()
+    send_heartbeats (); ()
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
+and init_leader () =
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_leader; ()
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -234,11 +243,9 @@ and act_candidate () =
     ()
 
 and init_candidate () =
-    let start_listening act_new_role =
-    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
-    Async.Scheduler.go ()) in
-    Thread.create start_listening act_candidate; ()
-
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_candidate; ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -253,10 +260,9 @@ and act_follower () =
         ((dec_timer (); act_follower))
 
 and init_follower () =
-    let start_listening act_new_role =
-    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
-    Async.Scheduler.go ()) in
-    Thread.create start_listening act_follower; ()
+    let old_thr = !curr_role_thr in
+    Thread.kill old_thr;
+    curr_role_thr := Thread.create start_listening act_follower; ()
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -264,7 +270,7 @@ and win_election () =
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
-    act_leader (); ()
+    init_leader (); ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
@@ -299,7 +305,9 @@ let handle_message msg oc =
     | _ -> ()
 
 let init_server () =
-    change_heartbeat ()
+    (* TODO change id of server s*)
+    change_heartbeat ();
+    init_follower ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
