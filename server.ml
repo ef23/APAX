@@ -171,17 +171,21 @@ let rec send_heartbeat oc () =
 
 let send_heartbeats () =
     let lst_o = !output_channels in
+    print_string " fdsafds";
     let rec send_to_ocs lst =
       match lst with
       | h::t ->
         begin
+          print_string "in send heartbeat match";
           let start_timer oc_in =
           Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
           in
           ignore (Thread.create start_timer h); send_to_ocs t;
         end
       | [] -> () in
-    send_to_ocs lst_o; Async.Scheduler.go ()
+    send_to_ocs lst_o; Async.Scheduler.go ();;
+
+let hellosend () = print_string "fdsafsa";;
 
 let start_listening act_new_role =
     (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
@@ -368,8 +372,11 @@ let create_socket portnum () =
 let main_client address portnum =
     try 
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
+        print_endline "main client";
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in 
-        ()
+        let otherl = !output_channels in
+             output_channels := (oc::otherl);
+        Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.eprintf "bad port number";
                                         exit 2 ;;
@@ -412,11 +419,13 @@ let janice_ip_port_list () = [("10.148.3.115", 9000);("10.148.3.115", 9001)]
 let establish_connections_to_others () =
     print_endline "establish";
     let ip_ports_list = janice_ip_port_list () in 
+    print_string (string_of_int (List.length ip_ports_list));
     let rec get_connections lst = 
         match lst with 
         | [] -> ()
         | (ip_addr, portnum)::t -> 
         begin 
+            print_endline "in begin";
             main_client ip_addr portnum;
             get_connections t;
         end
