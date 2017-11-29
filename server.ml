@@ -167,25 +167,26 @@ let get_entry_term e_opt =
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "{\"type\":\"heartbeat\"}"; Lwt_io.flush oc;
+    print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
 let send_heartbeats () =
     let lst_o = !output_channels in
-    print_string " fdsafds";
+    print_endline " fdsafds";
     let rec send_to_ocs lst =
       match lst with
       | h::t ->
         begin
-          print_string "in send heartbeat match";
+          print_endline "in send heartbeat match";
           let start_timer oc_in =
           Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
           in
           ignore (Thread.create start_timer h); send_to_ocs t;
         end
       | [] -> () in
-    send_to_ocs lst_o; Async.Scheduler.go ();;
-
-let hellosend () = print_string "fdsafsa";;
+    print_endline "number of ocs";
+    print_endline (string_of_int (List.length lst_o));
+    send_to_ocs lst_o; Async.Scheduler.go ()
 
 let start_listening act_new_role =
     (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
@@ -415,12 +416,11 @@ let main_client address portnum =
            with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;*)
 
-let janice_ip_port_list () = [("10.147.139.75", 9000);("10.147.139.75", 9001)]
+let janice_ip_port_list () = [("10.148.7.148", 9000);("10.148.7.148", 9001)]
 
 let establish_connections_to_others () =
     print_endline "establish";
-    let ip_ports_list = janice_ip_port_list () in 
-    print_string (string_of_int (List.length ip_ports_list));
+    let ip_ports_list = !serv_state.neighboringIPs in 
     let rec get_connections lst = 
         match lst with 
         | [] -> ()
@@ -502,17 +502,46 @@ and act_candidate () =
 (*  *)
 and act_follower () = failwith "TODO"
 
+let doboth () =
+    read_neighoring_ips () |> establish_connections_to_others |>
+    send_heartbeats ;;
 
 let startserver portnum establish =
     print_endline "ajsdfjasjdfjasjf";
-    let sock = create_socket portnum () in
-(*=======
-let _ =
     read_neighoring_ips ();
-    let sock = create_socket () in
->>>>>>> b29e4a6f6e0866676a90d5b4eafec892081010d7*)
+    let sock = create_socket portnum () in
     let serve = create_server sock in
 
-    Lwt_main.run @@ serve ();
-    if (establish) then establish_connections_to_others ()
+    Lwt_main.run @@ serve ();;
+
+let startserverest portnum establish =
+    print_endline "ajsdfjasjdfjasjf";
+    read_neighoring_ips ();
+    establish_connections_to_others ();
+    let sock = create_socket portnum () in
+    let serve = create_server sock in
+
+    Lwt_main.run @@ serve ();;
+   (* if(establish) then begin print_endline "hei"; establish_connections_to_others () end
+*)
+
+(*let startserverestablishsend portnum establish =
+    print_endline "ajsdfjasjdfjasjf";
+    establish_connections_to_others ();
+    (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeats); (*TODO test with not hardcoded values for heartbeat*)
+    Async.Scheduler.go ();*)
+    send_heartbeats ();
+    let sock = create_socket portnum () in
+
+(*let _ =
+    read_neighoring_ips ();
+    let sock = create_socket () in
+    let serve = create_server sock in
+
+    Lwt_main.run @@ serve ();*)
+
+   (* if(establish) then begin print_endline "hei"; establish_connections_to_others () end
+*)
+*)
+
 
