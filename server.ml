@@ -13,8 +13,6 @@ open Yojson.Basic.Util
 
 type role = | Follower | Candidate | Leader
 
-type ip_address_str = string
-
 type state = {
     id : int;
     role : role;
@@ -81,10 +79,10 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
-let req_append_entries msg ip_address_str = failwith "u suck"
-let res_append_entries msg ip_address_str = failwith "u suck"
+let req_append_entries msg oc = failwith "u suck"
+let res_append_entries msg oc = failwith "u suck"
 
-let req_request_vote ballot ip_address_str =
+let req_request_vote ballot oc =
     let json = {|
       {
         "term": ballot.term,
@@ -94,10 +92,10 @@ let req_request_vote ballot ip_address_str =
       }
     |} in ()
 
-let res_request_vote msg ip_address_str = failwith "succ my zucc"
+let res_request_vote msg oc = failwith "succ my zucc"
 
 (* [handle_vote_req msg] handles receiving a vote request message *)
-let handle_vote_req msg =
+let handle_vote_req msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_int in
     let continue = match !serv_state.votedFor with
                     | None -> true
@@ -116,8 +114,7 @@ let handle_vote_req msg =
             "current_term":!serv_state.currentTerm,
             "vote_granted":vote_granted,
           }
-        |} in json
-        (* send to server *)
+        |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
     | None -> failwith "kek"
 
 let set_term i =
@@ -158,16 +155,6 @@ let start_election () =
         last_log_term = get_entry_term (!serv_state.lastEntry)
     } in
     send_rpcs (req_request_vote ballot) neighbors
-
-(* let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t *)
 
 (* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
 let rec init_heartbeats () = ()
@@ -246,7 +233,7 @@ and terminate_election () =
     start_election ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
-let handle_vote_res msg =
+let handle_vote_res msg hi =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
@@ -269,28 +256,26 @@ let send_heartbeats () =
       | [] -> () in
     gothrough lst_o; Async.Scheduler.go ()
 
-let handle_message msg =
+let handle_message msg oc =
     serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "sendall" -> send_heartbeats (); "gug"
-    | "vote_req" -> handle_vote_req msg
-    | "vote_res" -> handle_vote_res msg; "gug"
+    | "sendall" -> send_heartbeats (); ()
+    | "vote_req" -> handle_vote_req msg oc; ()
+    | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower};
-                    "gug"
-    | "appd_res" -> "gug"
-    | _ -> "gug"
-
+                    then serv_state := {!serv_state with role = Follower}; ()
+    | "appd_res" -> ()
+    | _ -> ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
         match msg with
-        | Some msg ->
-            let reply = handle_message msg in
-            Lwt_io.write_line oc reply >>= handle_connection ic oc
+        | Some m ->
+            handle_message m oc;
+            (handle_connection ic oc) ();
         | None -> Lwt_log.info "Connection closed" >>= return)
 
 let accept_connection conn =
@@ -329,51 +314,9 @@ let establish_conn server_addr  =
 
 let create_server sock =
     let rec serve () =
-        (* match read_line () with
-        | str -> establish_conn str;
- *)
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
-let set_term i =
-    {!serv_state with currentTerm = i}
-
-(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
- * partially applied function [f], which is assumed to be one of the following:
- * [req_append_entries msg]
- * [req_request_vote msg] *)
-let rec send_rpcs f ips =
-    match ips with
-    | [] -> ()
-    | ip::t ->
-        let _ = f ip in
-        send_rpcs f t
-
-(* [get_entry_term e_opt] takes in the value of a state's last entry option and
- * returns the last entry's term, or -1 if there was no last entry (aka the log
- * is empty) *)
-let get_entry_term e_opt =
-    match e_opt with
-    | Some e -> e.entryTerm
-    | None -> -1
-
-(* [start_election ()] starts the election for this server by incrementing its
- * term and sending RequestVote RPCs to every other server in the clique *)
-let start_election () =
-    (* increment term *)
-    let curr_term = !serv_state.currentTerm in
-    serv_state := set_term (curr_term + 1);
-
-    let neighbors = !serv_state.neighboringIPs in
-    (* ballot is a vote_req *)
-    let ballot = {
-        term = !serv_state.currentTerm;
-        candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
-    } in
-    send_rpcs (req_request_vote ballot) neighbors
 
 let _ =
     print_endline "ajsdfjasjdfjasjf";
