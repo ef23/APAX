@@ -109,6 +109,7 @@ let handle_vote_req msg =
         (* send to server *)
     | None -> failwith "kek"
 
+
 let set_term i =
     {!serv_state with currentTerm = i}
 
@@ -261,7 +262,6 @@ let handle_message msg =
     | "appd_res" -> "gug"
     | _ -> "gug"
 
-
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
@@ -281,15 +281,55 @@ let accept_connection conn =
     output_channels := (oc::otherl);
     Lwt_log.info "New connection" >>= return
 
-let create_socket () =
+(* this will be filled in the beginning *)
+
+let rec query_server ic oc = 
+  try
+    print_string  "Request : ";
+    print_string (string_of_float (Unix.time ()));
+    flush Pervasives.stdout;
+    (* output_string oc ((input_line Pervasives.stdin)^"\n") ; *)
+    output_string oc (("{\"type\":\"appd_res\"}")^"\n"); (*make client automatically do stuff. can reuse in server code*)
+    flush oc;
+    let r = input_line ic
+    in Printf.printf "Response : %s\n\n" r;
+    flush oc;
+    if r = "END" then (Unix.shutdown_connection ic; raise Exit);
+    (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (fun _ -> (query_server ic oc));*)
+  with
+    | Exit -> exit 0
+    | exn -> Unix.shutdown_connection ic ; raise exn
+
+
+let client_fun ic oc =
+  (* this would be a heartbeat thing 
+  Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (jej);*)
+  
+  (* this would be a main func thing *)
+  (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (fun _ -> *)query_server ic oc(*);
+  Async.Scheduler.go ()*)
+  (*Async.Scheduler.go ();;*)
+
+let create_socket portnum () = 
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
-    bind sock @@ ADDR_INET(listen_address, port);
+    bind sock @@ ADDR_INET(listen_address, portnum);
     listen sock backlog;
     sock
 
-let establish_conn server_addr  =
-  let server = "10.129.21.219" in
+let main_client address portnum : unit =
+    (*let open Lwt_unix in
+    let sock = socket PF_INET SOCK_STREAM 0 in
+    bind sock @@ ADDR_INET(Unix.inet_addr_of_string address, portnum);
+    listen sock backlog;
+    let oc = Lwt_io.of_fd Lwt_io.Output sock in *)
+    let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
+    (*let%lwt ic, oc = Lwt_io.open_connection sockaddr in *)
+    ()
+    (*let otherl = !output_channels in
+    output_channels := (oc::otherl)*)
+    (*file descriptor*)
+   (*let server = address in
         let server_addr =
           try Unix.inet_addr_of_string server
           with Failure("inet_addr_of_string") ->
@@ -298,19 +338,40 @@ let establish_conn server_addr  =
                         Printf.eprintf "%s : Unknown server\n" server ;
                         exit 2
         in try
-             let port = int_of_string ("9000") in
-             let sockaddr = Lwt_unix.ADDR_INET(server_addr,port) in
-             let%lwt ic, oc = Lwt_io.open_connection sockaddr
-             in handle_connection ic oc ()
-        with Failure("int_of_string") -> Printf.eprintf "bad port number";
-                                            exit 2 ;;
+             let port = portnum in
+             let sockaddr = Unix.ADDR_INET(server_addr,port) in
+             let ic,oc = Unix.open_connection sockaddr in
+             let otherl = !output_channels in
+             output_channels := (oc::otherl)
+           with Failure("int_of_string") -> Printf.eprintf "bad port number";
+                                            exit 2 ;;*)
+
+             (*
+             in client_fun ic oc ;
+                Unix.shutdown_connection ic
+           with Failure("int_of_string") -> Printf.eprintf "bad port number";
+                                            exit 2 ;;*)
+
+let janice_ip_port_list () = [("10.148.3.115", 9000);("10.148.3.115", 9001)]
+
+let establish_connections_to_others () =
+    print_endline "establish";
+    let ip_ports_list = janice_ip_port_list () in 
+    let rec get_connections lst = 
+        match lst with 
+        | [] -> ()
+        | (ip_addr, portnum)::t -> 
+        begin 
+            main_client ip_addr portnum;
+            get_connections t;
+        end
+    in get_connections ip_ports_list
 
 let create_server sock =
     let rec serve () =
         (* match read_line () with
         | str -> establish_conn str;
  *)
-        establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
@@ -380,9 +441,11 @@ and act_candidate () =
 and act_follower () = failwith "TODO"
 
 
-let _ =
+let startserver portnum establish =
     print_endline "ajsdfjasjdfjasjf";
-    let sock = create_socket () in
+    let sock = create_socket portnum () in
     let serve = create_server sock in
 
-    Lwt_main.run @@ serve ()
+    Lwt_main.run @@ serve ();
+    if (establish) then establish_connections_to_others ()
+
