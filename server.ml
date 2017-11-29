@@ -23,7 +23,7 @@ type state = {
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
-    neighboringIPs : (string*string) list; (* ip * port *)
+    neighboringIPs : (string*int) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
     internal_timer : int;
@@ -50,6 +50,29 @@ let serv_state = ref {
     matchIndexList = [];
     internal_timer = 0;
 }
+
+
+let read_neighoring_ips () =
+  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let port_regex = "\:[0-9]*" in
+  let port_regex = "[0-9]" in
+  let rec process_file f_channel =
+    try
+      let line = Pervasives.input_line f_channel in
+      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
+      let ip_str = Str.matched_string line in
+      let _ = Str.search_forward (Str.regexp port_regex) line 0 in
+      let ip_len = String.length ip_str in
+      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
+      let new_ip = (ip_str, port_int) in
+      let updated_ips = new_ip::!serv_state.neighboringIPs in
+      serv_state := {!serv_state with neighboringIPs = updated_ips};
+      process_file f_channel
+    with
+    | End_of_file -> Pervasives.close_in f_channel; ()
+  in
+  process_file (Pervasives.open_in "ips")
+
 
 let vote_counter = ref 0
 
@@ -315,12 +338,76 @@ let establish_conn server_addr  =
 
 let create_server sock =
     let rec serve () =
-        establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
+let set_term i =
+    {!serv_state with currentTerm = i}
+
+(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
+let rec send_rpcs f ips =
+    match ips with
+    | [] -> ()
+    | ip::t ->
+        let _ = f ip in
+        send_rpcs f t
+
+(* [get_entry_term e_opt] takes in the value of a state's last entry option and
+ * returns the last entry's term, or -1 if there was no last entry (aka the log
+ * is empty) *)
+let get_entry_term e_opt =
+    match e_opt with
+    | Some e -> e.entryTerm
+    | None -> -1
+
+(* [start_election ()] starts the election for this server by incrementing its
+ * term and sending RequestVote RPCs to every other server in the clique *)
+let start_election () =
+    (* increment term *)
+    let curr_term = !serv_state.currentTerm in
+    serv_state := set_term (curr_term + 1);
+
+    let neighbors = !serv_state.neighboringIPs in
+    (* ballot is a vote_req *)
+    let ballot = {
+        term = !serv_state.currentTerm;
+        candidate_id = !serv_state.id;
+        last_log_index = !serv_state.commitIndex;
+        last_log_term = get_entry_term (!serv_state.lastEntry)
+    } in
+    send_rpcs (req_request_vote ballot) neighbors
+
+let dummy_get_oc ip = failwith "replace with what maria and janice implement"
+
+let rec send_all_heartbeats ips =
+    match ips with
+    | [] -> ()
+    | h::t ->
+        let oc = dummy_get_oc h in
+        (* TODO defer this? *)
+        send_heartbeat oc ();
+        send_all_heartbeats t
+
+(*  *)
+and act_leader () =
+
+
+    (* listen for client requests *)
+
+    failwith "TODO"
+(*  *)
+and act_candidate () =
+    start_election
+    (* now listen for responses to the req_votes *)
+
+(*  *)
+and act_follower () = failwith "TODO"
+
 let _ =
-    print_endline "ajsdfjasjdfjasjf";
+    read_neighoring_ips ();
     let sock = create_socket () in
     let serve = create_server sock in
 
