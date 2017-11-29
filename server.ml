@@ -79,7 +79,7 @@ let read_neighboring_ips port_num =
   in
   process_file (Pervasives.open_in "ips")
 
-let curr_role_thr = ref (Thread.create (fun _ -> ()) ())
+let curr_role_thr = ref None
 
 let vote_counter = ref 0
 
@@ -193,8 +193,8 @@ let send_heartbeats () =
     send_to_ocs lst_o; Async.Scheduler.go ()
 
 let start_listening act_new_role =
-    (Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
-    Async.Scheduler.go ())
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
+    Core_kernel.Std.never_returns @@ Async.Scheduler.go ()
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
@@ -219,13 +219,16 @@ let rec start_election () =
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
     (* start thread to periodically send heartbeats *)
+    print_endline "act leader";
     send_heartbeats (); ()
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
 and init_leader () =
-    let old_thr = !curr_role_thr in
-    Thread.kill old_thr;
-    curr_role_thr := Thread.create start_listening act_leader; ()
+    (* let old_thr = !curr_role_thr in *)
+    (* Thread.kill old_thr; *)
+    print_endline "init leader";
+    Thread.create start_listening act_leader;
+    Thread.exit ()
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -234,6 +237,7 @@ and init_leader () =
 and act_candidate () =
     (* if the candidate is still a follower, then start a new election
      * otherwise terminate. *)
+    print_endline "act candidate";
     let check_election_complete () =
         if !serv_state.role = Candidate then act_candidate () in
 
@@ -249,13 +253,15 @@ and act_candidate () =
     start_election ();
 
     (* now listen for responses to the req_votes *)
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election);
-    ()
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election)
 
 and init_candidate () =
-    let old_thr = !curr_role_thr in
-    Thread.kill old_thr;
-    curr_role_thr := Thread.create start_listening act_candidate; ()
+    (* let old_thr = !curr_role_thr in *)
+    (* Thread.kill old_thr; *)
+    print_endline "hello!";
+    Thread.create start_listening act_candidate;
+    print_endline "goodbye!";
+    Thread.exit ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -264,15 +270,19 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-    if !serv_state.internal_timer=0 && !serv_state.votedFor<>None
+    print_endline "act follower";
+    print_endline (string_of_int !serv_state.internal_timer);
+    if !serv_state.internal_timer=0 && (!serv_state.votedFor = None)
     then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
     else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
         ((dec_timer (); act_follower))
 
 and init_follower () =
-    let old_thr = !curr_role_thr in
-    Thread.kill old_thr;
-    curr_role_thr := Thread.create start_listening act_follower; ()
+    (* let old_thr = !curr_role_thr in *)
+    (* Thread.kill old_thr; *)
+    print_endline "init follower";
+    Thread.create start_listening act_follower;
+    Thread.exit ()
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -332,7 +342,7 @@ let handle_message msg oc =
 let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
-    init_follower ()
+    Thread.create init_follower ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -410,9 +420,9 @@ let create_server sock =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
-(* let doboth () =
-    read_neighboring_ips () |> establish_connections_to_others |>
-    send_heartbeats ;; *)
+let doboth () =
+    read_neighboring_ips 9003 |> establish_connections_to_others |>
+    send_heartbeats ;;
 
 let startserver port_num =
     print_endline "ajsdfjasjdfjasjf";
@@ -431,4 +441,13 @@ let startserverest port_num =
 
     Lwt_main.run @@ serve ();;
 
+let startserverest2 port_num =
+    print_endline "ajsdfjasjdfjasjf";
+    read_neighboring_ips port_num;
+    establish_connections_to_others ();
+    let sock = create_socket port_num () in
+    let serve = create_server sock in
 
+    init_server ();
+
+    Lwt_main.run @@ serve ();;
