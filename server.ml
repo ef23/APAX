@@ -166,7 +166,7 @@ let get_entry_term e_opt =
     | None -> -1
 
 let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Lwt_io.write_line oc "{"type":"f"}"; Lwt_io.flush oc;
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
 let send_heartbeats () =
@@ -378,7 +378,7 @@ let main_client address portnum =
              output_channels := (oc::otherl);
         Lwt_log.info "added connection" >>= return
     with
-        Failure("int_of_string") -> Printf.eprintf "bad port number";
+        Failure("int_of_string") -> Printf.printf "bad port number";
                                         exit 2 ;;
 
 
@@ -414,7 +414,7 @@ let main_client address portnum =
            with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;*)
 
-let janice_ip_port_list () = [("10.148.3.115", 9000);("10.148.3.115", 9001)]
+let janice_ip_port_list () = [("10.147.139.75", 9000);("10.147.139.75", 9001)]
 
 let establish_connections_to_others () =
     print_endline "establish";
