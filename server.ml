@@ -506,7 +506,7 @@ let doboth () =
     read_neighoring_ips () |> establish_connections_to_others |>
     send_heartbeats ;;
 
-let startserver portnum establish =
+let startserver portnum =
     print_endline "ajsdfjasjdfjasjf";
     read_neighoring_ips ();
     let sock = create_socket portnum () in
@@ -514,7 +514,7 @@ let startserver portnum establish =
 
     Lwt_main.run @@ serve ();;
 
-let startserverest portnum establish =
+let startserverest portnum =
     print_endline "ajsdfjasjdfjasjf";
     read_neighoring_ips ();
     establish_connections_to_others ();
