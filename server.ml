@@ -25,7 +25,7 @@ type state = {
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
-    neighboringIPs : (string*string) list; (* ip * port *)
+    neighboringIPs : (string*int) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
 }
@@ -50,6 +50,29 @@ let serv_state =  ref {
     nextIndexList = [];
     matchIndexList = [];
 }
+
+
+let read_neighoring_ips () =
+  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let port_regex = "\:[0-9]*" in
+  let port_regex = "[0-9]" in
+  let rec process_file f_channel =
+    try
+      let line = Pervasives.input_line f_channel in
+      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
+      let ip_str = Str.matched_string line in
+      let _ = Str.search_forward (Str.regexp port_regex) line 0 in
+      let ip_len = String.length ip_str in
+      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
+      let new_ip = (ip_str, port_int) in
+      let updated_ips = new_ip::!serv_state.neighboringIPs in
+      serv_state := {!serv_state with neighboringIPs = updated_ips};
+      process_file f_channel
+    with
+    | End_of_file -> Pervasives.close_in f_channel; ()
+  in
+  process_file (Pervasives.open_in "ips")
+
 
 let vote_counter = ref 0
 
@@ -148,15 +171,23 @@ let start_election () =
     } in
     send_rpcs (req_request_vote ballot) neighbors
 
-(* let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t *)
+let rec send_heartbeat oc () =
+    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+
+let send_heartbeats () =
+    let lst_o = !output_channels in
+    let rec gothrough lst =
+      match lst with
+      | h::t ->
+        begin
+        let hello oc_in =
+        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in);
+        in
+        ignore (Thread.create hello h); gothrough t;
+        end
+      | [] -> () in
+    gothrough lst_o; Async.Scheduler.go ()
 
 (* [init_heartbeats ()] starts a new thread to periodically send heartbeats *)
 let rec init_heartbeats () = ()
@@ -180,7 +211,7 @@ and act_candidate () =
     let check_election_complete () =
         if !serv_state.role = Candidate then act_candidate (); in
 
-    let rec check_win_election () = 
+    let rec check_win_election () =
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
             then win_election ()
         else
@@ -214,6 +245,7 @@ and win_election () =
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
+    send_heartbeats ();
     act_leader ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
@@ -235,23 +267,7 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
-let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "test"; Lwt_io.flush oc;
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
-let send_heartbeats () =
-    let lst_o = !output_channels in
-    let rec gothrough lst =
-      match lst with
-      | h::t -> 
-        begin
-        let hello oc_in = 
-        Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in); 
-        in
-        ignore (Thread.create hello h); gothrough t;
-        end
-      | [] -> () in
-    gothrough lst_o; Async.Scheduler.go ()
 
 let handle_message msg =
     let msg = Yojson.Basic.from_string msg in
@@ -315,7 +331,7 @@ let create_server sock =
         (* match read_line () with
         | str -> establish_conn str;
  *)
-        establish_conn "";
+        (* establish_conn ""; *)
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
@@ -371,8 +387,8 @@ let rec send_all_heartbeats ips =
 
 (*  *)
 and act_leader () =
-    (* periodically send heartbeats *)
-    send_all_heartbeats !serv_state.neighboringIPs;
+
+
     (* listen for client requests *)
 
     failwith "TODO"
@@ -384,9 +400,8 @@ and act_candidate () =
 (*  *)
 and act_follower () = failwith "TODO"
 
-
 let _ =
-    print_endline "ajsdfjasjdfjasjf";
+    read_neighoring_ips ();
     let sock = create_socket () in
     let serve = create_server sock in
 

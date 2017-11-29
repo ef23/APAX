@@ -4,6 +4,7 @@
 #load "lwt.cma";;
 #load "core.cma";;
 #require "yojson";;
+#require "Str";;
 #load "async.cma";;
 #directory "_build";;
 #load "request_vote_rpc.cmo";;
