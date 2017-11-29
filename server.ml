@@ -166,7 +166,7 @@ let get_entry_term e_opt =
     | None -> -1
 
 let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "{"type":"f"}"; Lwt_io.flush oc;
+    Lwt_io.write_line oc "{\"type\":\"heartbeat\"}"; Lwt_io.flush oc;
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
 let send_heartbeats () =
@@ -301,6 +301,7 @@ let handle_message msg oc =
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
+    | "heartbeat" -> print_endline "this is a heart"; 
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
     | "vote_res" -> handle_vote_res msg oc; ()
