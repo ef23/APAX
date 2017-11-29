@@ -311,6 +311,20 @@ let handle_message msg oc =
     | "appd_res" -> ()
     | _ -> ()
 
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+ *                                                                           *
+ *                                                                           *
+ * EVERYTHING AFTER THIS POINT IS NETWORKING/SERVER STUFF WHICH IS GENERALLY *
+ * SEPARATE FROM RAFT IMPLEMENTATION DETAILS                                 *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+
+(* [init_server ()] starts up this server as a follower and anticipates an
+ * election. That is, this should ONLY be called as soon as the server begins
+ * running (and after it has set up connections with all other servers) *)
 let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
@@ -354,16 +368,6 @@ let rec query_server ic oc =
     | Exit -> exit 0
     | exn -> Unix.shutdown_connection ic ; raise exn
 
-
-let client_fun ic oc =
-  (* this would be a heartbeat thing 
-  Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (jej);*)
-  
-  (* this would be a main func thing *)
-  (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (fun _ -> *)query_server ic oc(*);
-  Async.Scheduler.go ()*)
-  (*Async.Scheduler.go ();;*)
-
 let create_socket portnum () = 
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
@@ -383,41 +387,6 @@ let main_client address portnum =
         Failure("int_of_string") -> Printf.printf "bad port number";
                                         exit 2 ;;
 
-
-
-    (*let open Lwt_unix in
-    let sock = socket PF_INET SOCK_STREAM 0 in
-    bind sock @@ ADDR_INET(Unix.inet_addr_of_string address, portnum);
-    listen sock backlog;
-    let oc = Lwt_io.of_fd Lwt_io.Output sock in *)
-    (*let otherl = !output_channels in
-    output_channels := (oc::otherl)*)
-    (*file descriptor*)
-   (*let server = address in
-        let server_addr =
-          try Unix.inet_addr_of_string server
-          with Failure("inet_addr_of_string") ->
-                 try  (Unix.gethostbyname server).Unix.h_addr_list.(0)
-                 with Not_found ->
-                        Printf.eprintf "%s : Unknown server\n" server ;
-                        exit 2
-        in try
-             let port = portnum in
-             let sockaddr = Unix.ADDR_INET(server_addr,port) in
-             let ic,oc = Unix.open_connection sockaddr in
-             let otherl = !output_channels in
-             output_channels := (oc::otherl)
-           with Failure("int_of_string") -> Printf.eprintf "bad port number";
-                                            exit 2 ;;*)
-
-             (*
-             in client_fun ic oc ;
-                Unix.shutdown_connection ic
-           with Failure("int_of_string") -> Printf.eprintf "bad port number";
-                                            exit 2 ;;*)
-
-let janice_ip_port_list () = [("10.148.7.148", 9000);("10.148.7.148", 9001)]
-
 let establish_connections_to_others () =
     print_endline "establish";
     let ip_ports_list = !serv_state.neighboringIPs in 
@@ -436,71 +405,6 @@ let create_server sock =
     let rec serve () =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
-let set_term i =
-    {!serv_state with currentTerm = i}
-
-(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
- * partially applied function [f], which is assumed to be one of the following:
- * [req_append_entries msg]
- * [req_request_vote msg] *)
-let rec send_rpcs f ips =
-    match ips with
-    | [] -> ()
-    | ip::t ->
-        let _ = f ip in
-        send_rpcs f t
-
-(* [get_entry_term e_opt] takes in the value of a state's last entry option and
- * returns the last entry's term, or -1 if there was no last entry (aka the log
- * is empty) *)
-let get_entry_term e_opt =
-    match e_opt with
-    | Some e -> e.entryTerm
-    | None -> -1
-
-(* [start_election ()] starts the election for this server by incrementing its
- * term and sending RequestVote RPCs to every other server in the clique *)
-let start_election () =
-    (* increment term *)
-    let curr_term = !serv_state.currentTerm in
-    serv_state := set_term (curr_term + 1);
-
-    let neighbors = !serv_state.neighboringIPs in
-    (* ballot is a vote_req *)
-    let ballot = {
-        term = !serv_state.currentTerm;
-        candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
-    } in
-    send_rpcs (req_request_vote ballot) neighbors
-
-let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t
-
-(*  *)
-and act_leader () =
-    (* periodically send heartbeats *)
-    send_all_heartbeats !serv_state.neighboringIPs;
-    (* listen for client requests *)
-
-    failwith "TODO"
-(*  *)
-and act_candidate () =
-    start_election
-    (* now listen for responses to the req_votes *)
-
-(*  *)
-and act_follower () = failwith "TODO"
 
 let doboth () =
     read_neighoring_ips () |> establish_connections_to_others |>
@@ -522,26 +426,5 @@ let startserverest portnum =
     let serve = create_server sock in
 
     Lwt_main.run @@ serve ();;
-   (* if(establish) then begin print_endline "hei"; establish_connections_to_others () end
-*)
-
-(*let startserverestablishsend portnum establish =
-    print_endline "ajsdfjasjdfjasjf";
-    establish_connections_to_others ();
-    (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeats); (*TODO test with not hardcoded values for heartbeat*)
-    Async.Scheduler.go ();*)
-    send_heartbeats ();
-    let sock = create_socket portnum () in
-
-(*let _ =
-    read_neighoring_ips ();
-    let sock = create_socket () in
-    let serve = create_server sock in
-
-    Lwt_main.run @@ serve ();*)
-
-   (* if(establish) then begin print_endline "hei"; establish_connections_to_others () end
-*)
-*)
 
 
