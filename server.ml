@@ -13,8 +13,6 @@ open Yojson.Basic.Util
 
 type role = | Follower | Candidate | Leader
 
-type ip_address_str = string
-
 type state = {
     id : int;
     role : role;
@@ -28,6 +26,7 @@ type state = {
     neighboringIPs : (string*int) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
+    internal_timer : int;
 }
 
 (* the lower range of the election timeout, in this case 150-300ms*)
@@ -49,6 +48,7 @@ let serv_state =  ref {
     neighboringIPs = [];
     nextIndexList = [];
     matchIndexList = [];
+    internal_timer = 0;
 }
 
 
@@ -77,7 +77,16 @@ let read_neighoring_ips () =
 let vote_counter = ref 0
 
 let change_heartbeat () =
-    serv_state := {!serv_state with heartbeat = generate_heartbeat}
+    let new_heartbeat = generate_heartbeat in
+    serv_state := {!serv_state with
+            heartbeat = new_heartbeat;
+            internal_timer = new_heartbeat;
+        }
+
+let dec_timer () = serv_state :=
+    {
+        !serv_state with internal_timer = (!serv_state.internal_timer - 1);
+    }
 
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
@@ -93,10 +102,10 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
-let req_append_entries msg ip_address_str = failwith "u suck"
-let res_append_entries msg ip_address_str = failwith "u suck"
+let req_append_entries msg oc = failwith "u suck"
+let res_append_entries msg oc = failwith "u suck"
 
-let req_request_vote ballot ip_address_str =
+let req_request_vote ballot oc =
     let json = {|
       {
         "term": ballot.term,
@@ -106,10 +115,10 @@ let req_request_vote ballot ip_address_str =
       }
     |} in ()
 
-let res_request_vote msg ip_address_str = failwith "succ my zucc"
+let res_request_vote msg oc = failwith "succ my zucc"
 
 (* [handle_vote_req msg] handles receiving a vote request message *)
-let handle_vote_req msg =
+let handle_vote_req msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_int in
     let continue = match !serv_state.votedFor with
                     | None -> true
@@ -128,8 +137,7 @@ let handle_vote_req msg =
             "current_term":!serv_state.currentTerm,
             "vote_granted":vote_granted,
           }
-        |} in json
-        (* send to server *)
+        |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
     | None -> failwith "kek"
 
 let set_term i =
@@ -218,7 +226,7 @@ and act_candidate () =
             check_win_election () in
 
     (* call act_candidate again if timer runs out *)
-    serv_state := {!serv_state with heartbeat = generate_heartbeat};
+    change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
     start_election;
 
@@ -229,6 +237,7 @@ and act_candidate () =
 
 and init_candidate () =
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_candidate);
+    (* TODO: move this somewhere else *)
     Async.Scheduler.go ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
@@ -237,7 +246,11 @@ and init_candidate () =
  * if a follower receives a client request, they will send it as a special RPC
  * to the leader, and then receive the special RPC and reply back to the client
  *)
-and act_follower () = failwith "TODO"
+and act_follower () =
+    if !serv_state.internal_timer=0 && !serv_state.votedFor<>None
+    then (serv_state := {!serv_state with role=Candidate}; act_candidate ())
+    else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
+        ((dec_timer (); act_follower))
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -262,34 +275,31 @@ and terminate_election () =
     start_election ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
-let handle_vote_res msg =
+let handle_vote_res msg hi =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
-
-
-let handle_message msg =
+let handle_message msg oc =
+    serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "sendall" -> send_heartbeats (); "gug"
-    | "vote_req" -> handle_vote_req msg
-    | "vote_res" -> handle_vote_res msg; "gug"
+    | "sendall" -> send_heartbeats (); ()
+    | "vote_req" -> handle_vote_req msg oc; ()
+    | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower};
-                    "gug"
-    | "appd_res" -> "gug"
-    | _ -> "gug"
-
+                    then serv_state := {!serv_state with role = Follower}; ()
+    | "appd_res" -> ()
+    | _ -> ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
         match msg with
-        | Some msg ->
-            let reply = handle_message msg in
-            Lwt_io.write_line oc reply >>= handle_connection ic oc
+        | Some m ->
+            handle_message m oc;
+            (handle_connection ic oc) ();
         | None -> Lwt_log.info "Connection closed" >>= return)
 
 let accept_connection conn =
@@ -328,10 +338,6 @@ let establish_conn server_addr  =
 
 let create_server sock =
     let rec serve () =
-        (* match read_line () with
-        | str -> establish_conn str;
- *)
-        (* establish_conn ""; *)
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
