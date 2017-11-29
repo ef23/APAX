@@ -312,22 +312,11 @@ let establish_conn server_addr  =
         with Failure("int_of_string") -> Printf.eprintf "bad port number";
                                             exit 2 ;;
 
-let dummy_get_oc ip = failwith "replace with what maria and janice implement"
-
 let create_server sock =
     let rec serve () =
         establish_conn "";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
-let rec send_all_heartbeats ips =
-    match ips with
-    | [] -> ()
-    | h::t ->
-        let oc = dummy_get_oc h in
-        (* TODO defer this? *)
-        send_heartbeat oc ();
-        send_all_heartbeats t
 
 let _ =
     print_endline "ajsdfjasjdfjasjf";
