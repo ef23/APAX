@@ -146,10 +146,6 @@ let handle_vote_req msg oc =
         |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
     | None -> failwith "kek"
 
-
-let set_term i =
-    {!serv_state with currentTerm = i}
-
 (* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
  * [req_append_entries msg]
@@ -190,19 +186,19 @@ let send_heartbeats () =
       | [] -> () in
     print_endline "number of ocs";
     print_endline (string_of_int (List.length lst_o));
-    send_to_ocs lst_o; Async.Scheduler.go ()
-
-let start_listening act_new_role =
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (act_new_role);
-    Core_kernel.Std.never_returns @@ Async.Scheduler.go ()
+    send_to_ocs lst_o
+    (* Async.Scheduler.go () *)
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
-    (* increment term *)
+    (* increment term and vote for self *)
     let curr_term = !serv_state.currentTerm in
-    serv_state := set_term (curr_term + 1);
-
+    serv_state := {
+        !serv_state with currentTerm = curr_term + 1;
+                         votedFor = (Some !serv_state.id)
+                    };
+    vote_counter := !vote_counter + 1;
     let neighbors = !serv_state.neighboringIPs in
     (* ballot is a vote_req *)
     let ballot = {
@@ -227,8 +223,7 @@ and init_leader () =
     (* let old_thr = !curr_role_thr in *)
     (* Thread.kill old_thr; *)
     print_endline "init leader";
-    Thread.create start_listening act_leader;
-    Thread.exit ()
+    act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -239,9 +234,17 @@ and act_candidate () =
      * otherwise terminate. *)
     print_endline "act candidate";
     let check_election_complete () =
+        (* if false, then election has not completed, so start new election.
+         * Otherwise if true, then don't do anything (equiv of cancelling timer)
+         *)
         if !serv_state.role = Candidate then act_candidate () in
 
+    (* this will be continuously run to check if the election has been won by
+     * this candidate *)
     let rec check_win_election () =
+        print_endline (string_of_int (List.length !serv_state.neighboringIPs));
+        print_endline (string_of_int !vote_counter);
+        (* if majority of votes, proceed to win election *)
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
             then win_election ()
         else
@@ -249,19 +252,18 @@ and act_candidate () =
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
     start_election ();
 
-    (* now listen for responses to the req_votes *)
+    (* continuously check if election has completed and
+     * listen for responses to the req_votes *)
+    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election)
 
 and init_candidate () =
     (* let old_thr = !curr_role_thr in *)
     (* Thread.kill old_thr; *)
-    print_endline "hello!";
-    Thread.create start_listening act_candidate;
-    print_endline "goodbye!";
-    Thread.exit ()
+    change_heartbeat ();
+    act_candidate (); ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -272,8 +274,10 @@ and init_candidate () =
 and act_follower () =
     print_endline "act follower";
     print_endline (string_of_int !serv_state.internal_timer);
+    (* check if the timeout has expired, and that it has voted for no one *)
     if !serv_state.internal_timer=0 && (!serv_state.votedFor = None)
     then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
+    (* if condition satisfied, continue being follower, otherwise start elec *)
     else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
         ((dec_timer (); act_follower))
 
@@ -281,8 +285,7 @@ and init_follower () =
     (* let old_thr = !curr_role_thr in *)
     (* Thread.kill old_thr; *)
     print_endline "init follower";
-    Thread.create start_listening act_follower;
-    Thread.exit ()
+    act_follower ();
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -342,7 +345,9 @@ let handle_message msg oc =
 let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
-    Thread.create init_follower ()
+    init_follower ();
+    (* any more scheduled tasks will run after this *)
+    Async.Scheduler.go ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
