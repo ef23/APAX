@@ -116,14 +116,14 @@ let req_append_entries msg oc = failwith "u suck"
 let res_append_entries msg oc = failwith "u suck"
 
 let req_request_vote ballot oc =
-    let json = {|
-      {
-        "term": ballot.term,
-        "candidate_id": ballot.cand_id,
-        "last_log_index": ballot.last_log_ind,
-        "last_log_term": ballot.last_log_term
-      }
-    |} in send_msg json oc
+    let json = 
+      "{
+        \"term\":" ^ (string_of_int ballot.term) ^",
+        \"candidate_id\":" ^ ballot.cand_id ^ ",
+        \"last_log_index\": " ^ (string_of_int ballot.last_log_ind) ^ ",
+        \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ 
+      "}"
+    in send_msg json oc
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
 let res_request_vote msg oc =
@@ -140,12 +140,12 @@ let res_request_vote msg oc =
         let curr_log_term = log.entryTerm in
         let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
-        let json = {|
-          {
-            "current_term":!serv_state.currentTerm,
-            "vote_granted":vote_granted,
-          }
-        |} in send_msg json oc
+        let json = 
+          "{
+            \"current_term\":" ^ (string_of_int !serv_state.currentTerm) ^ ",
+            \"vote_granted\":" ^ (string_of_bool vote_granted) ^ ",
+          }"
+         in send_msg json oc
     | None -> failwith "kek"
 
 (* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
