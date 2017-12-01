@@ -370,8 +370,8 @@ let accept_connection conn =
     let otherl = !output_channels in
     output_channels := (oc::otherl);
     let iplistlen = List.length (!serv_state.neighboringIPs) in
-    if (List.length !output_channels)=iplistlen then init_server ()
-    (*Lwt_log.info "New connection" >>= return*)
+    if (List.length !output_channels)=iplistlen then init_server ();
+    Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
 
@@ -459,7 +459,7 @@ let rec startserverest2 port_num serve =
     establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (Lwt_main.run @@ serve)
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (Lwt_main.run @@ serve ());
     (* any more scheduled tasks will run after this *)
     Async.Scheduler.go ()
 
