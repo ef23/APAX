@@ -90,6 +90,8 @@ let read_neighboring_ips port_num =
 let curr_role_thr = ref None
 
 let vote_counter = ref 0
+let response_count = ref 0
+let success_count = ref 0
 
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
@@ -270,6 +272,25 @@ let handle_ae_req msg oc =
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
+
+let handle_ae_res msg oc = 
+    let current_term = msg |> member "current_term" |> to_int in
+    let success = msg |> member "success" |> to_bool in
+
+    (* TODO wtf do we do with current_term??? *)
+
+    let s_count = (if success then !success_count + 1 else !success_count) in
+    let t_count = !response_count + 1 in
+    if s_count > ((List.length !serv_state.neighboringIPs) / 2) then
+        ((* reset counters *)
+        response_count := 0; success_count := 0;
+        (* TODO commit to log *)
+        ())
+    else if t_count = List.length !serv_state.neighboringIPs then
+        ((* reset reset counters *)
+        response_count := 0; success_count := 0;
+        ()) (* TODO notify client of failure *)
+    else () (* do nothing basically *)
 
 
 let req_request_vote ballot oc =
