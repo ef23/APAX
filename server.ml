@@ -28,12 +28,13 @@ type state = {
     nextIndexList : int list;
     matchIndexList : int list;
     internal_timer : int;
+    received_heartbeat : bool;
 }
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 150 in
-    let range = 150 in
+    let lower = 4000 in
+    let range = 4000 in
     (Random.int range) + lower
 
 let get_my_addr () =
@@ -54,6 +55,7 @@ let serv_state = ref {
     nextIndexList = [];
     matchIndexList = [];
     internal_timer = 0;
+    received_heartbeat = false;
 }
 
 
@@ -105,7 +107,6 @@ let dec_timer () = print_endline "dec timer"; serv_state :=
 
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
-
 
 let output_channels = ref []
 
@@ -171,6 +172,7 @@ let res_request_vote msg oc =
     let last_log_term = msg |> member "last_log_term" |> to_int in
     let last_log_index = msg |> member "last_log_index" |> to_int in
     let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
+    if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)}; 
     let json =
           "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
@@ -240,7 +242,7 @@ let rec start_election () =
         !serv_state with currentTerm = curr_term + 1;
                          votedFor = (Some !serv_state.id)
                     };
-    vote_counter := !vote_counter + 1;
+    vote_counter := 1;
     let neighbors = !serv_state.neighboringIPs in
     (* ballot is a vote_req *)
     let ballot = {
@@ -289,7 +291,7 @@ and act_candidate () =
         (* print_endline (string_of_int (List.length !serv_state.neighboringIPs));
         print_endline (string_of_int !vote_counter); *)
         (* if majority of votes, proceed to win election *)
-        if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
+        if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
         else
             check_win_election () in
@@ -301,7 +303,7 @@ and act_candidate () =
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
     Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_election_complete);
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election)
+    Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_win_election)
 
 and init_candidate () =
     (* let old_thr = !curr_role_thr in *)
@@ -319,17 +321,18 @@ and act_follower () =
     print_endline "act follower";
     print_endline (string_of_int !serv_state.internal_timer);
     (* check if the timeout has expired, and that it has voted for no one *)
-    if !serv_state.internal_timer=0 && (!serv_state.votedFor = None)
-    then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
+    if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
+    then begin (serv_state := {!serv_state with role=Candidate}; init_candidate ());  end
     (* if condition satisfied, continue being follower, otherwise start elec *)
-    else Async.upon (Async.after (Core.Time.Span.create ~ms:1 ()))
-        ((dec_timer (); act_follower))
+    else begin serv_state := {!serv_state with received_heartbeat = false}; (Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ()))
+        (act_follower)); end
 
 and init_follower () =
     (* let old_thr = !curr_role_thr in *)
     (* Thread.kill old_thr; *)
     print_endline "init follower";
-    act_follower ();
+    (Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ()))
+        (act_follower));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -373,7 +376,7 @@ let handle_client_as_leader msg =
 
 let handle_message msg oc =
     print_endline "i am in handle message";
-    serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
+    serv_state := {!serv_state with received_heartbeat = true};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
@@ -432,7 +435,7 @@ let handle_message msg oc =
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
     change_heartbeat ();
-    init_follower ();
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
     Async.Scheduler.go (); ()
 
 let rec handle_connection ic oc () =
@@ -536,14 +539,14 @@ let startserverest port_num =
 
     Lwt_main.run @@ serve ();;
 
-
 let rec st port_num =
-    Random.self_init ();
     serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
-    Lwt_main.run @@ serve ();
+    Lwt_main.run @@ serve ();;
+
+let _ = Random.self_init()
     (* any more scheduled tasks will run after this *)
 
