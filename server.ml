@@ -131,11 +131,11 @@ let stringify_entry e:string =
     "}"
   in json
 
-let req_append_entries msg oc =
+let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{
         \"type\": appd_req,
-        \"term\":" ^ (string_of_int msg.term) ^",
+        \"term\":" ^ (string_of_int msg.ap_term) ^",
         \"leader_id\":" ^ (msg.leader_id) ^ ",
         \"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ ",
         \"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ ",
@@ -153,6 +153,7 @@ let req_append_entries msg oc =
  - then when majority, incr commit index
 
  " *)
+
 let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
 
@@ -170,20 +171,20 @@ let res_request_vote msg oc =
     let otherTerm = msg |> member "term" |> to_int in
     let last_log_term = msg |> member "last_log_term" |> to_int in
     let last_log_index = msg |> member "last_log_index" |> to_int in
-    match !serv_state.lastEntry with
+    let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
+    let json =
+          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+         in send_msg json oc
+    (* match !serv_state.lastEntry with
     | Some log ->
         let curr_log_ind = log.index in
         let curr_log_term = log.entryTerm in
         let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
         let json =
-          "{
-            \"current_term\":" ^ (string_of_int !serv_state.currentTerm) ^ ",
-            \"vote_granted\":" ^ (string_of_bool vote_granted) ^ ",
-          }"
+          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
-    | None -> failwith "Impossible"
-
+    | None -> failwith "kek" *)
 
 (* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
@@ -280,6 +281,7 @@ and act_candidate () =
         (* if false, then election has not completed, so start new election.
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
+         print_endline (string_of_bool (!serv_state.role = Candidate ));
         if !serv_state.role = Candidate then act_candidate () in
 
     (* this will be continuously run to check if the election has been won by
@@ -299,7 +301,7 @@ and act_candidate () =
 
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_election_complete);
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election)
 
 and init_candidate () =
@@ -383,7 +385,36 @@ let handle_message msg oc =
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower}; () end
     | "appd_res" -> ()
-    | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
+    | "client" ->
+        (* TODO redirect client to Leader *)
+        if !serv_state.role <> Leader then
+            (print_endline !serv_state.leader_id; ())
+        else
+            (* create the append_entries_rpc *)
+            (* using -1 to indicate no previous entry *)
+            let p_log_idx =
+                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.index) in
+            let p_log_term =
+                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.entryTerm) in
+
+            let new_entry = {
+                    value = msg |> member "value" |> to_int;
+                    entryTerm = msg |> member "entryTerm" |> to_int;
+                    index = msg |> member "index" |> to_int;
+                } in
+
+            let rpc = {
+                ap_term = !serv_state.currentTerm;
+                leader_id = !serv_state.id;
+                prev_log_index = p_log_idx;
+                prev_log_term = p_log_term;
+                entries = [];
+                leader_commit = !serv_state.commitIndex;
+            } in
+
+            let old_log = !serv_state.log in
+            serv_state := {!serv_state with log = (new_entry::old_log)};
+            req_append_entries rpc oc; ()
     | _ -> ()
 
 
