@@ -124,7 +124,7 @@ let req_append_entries msg oc = failwith
 let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
 let req_request_vote ballot oc =
-    let json = 
+    let json =
       "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
     in send_msg json oc
 
@@ -137,16 +137,20 @@ let res_request_vote msg oc =
     let otherTerm = msg |> member "term" |> to_int in
     let last_log_term = msg |> member "last_log_term" |> to_int in
     let last_log_index = msg |> member "last_log_index" |> to_int in
-    match !serv_state.lastEntry with
+    let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
+    let json =
+          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+         in send_msg json oc
+    (* match !serv_state.lastEntry with
     | Some log ->
         let curr_log_ind = log.index in
         let curr_log_term = log.entryTerm in
         let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
-        let json = 
+        let json =
           "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
-    | None -> failwith "kek"
+    | None -> failwith "kek" *)
 
 (* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
@@ -244,6 +248,7 @@ and act_candidate () =
         (* if false, then election has not completed, so start new election.
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
+         print_endline (string_of_bool (!serv_state.role = Candidate ));
         if !serv_state.role = Candidate then act_candidate () in
 
     (* this will be continuously run to check if the election has been won by
@@ -263,7 +268,7 @@ and act_candidate () =
 
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (check_election_complete);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_election_complete);
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (check_win_election)
 
 and init_candidate () =
