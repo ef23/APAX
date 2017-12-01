@@ -2,7 +2,7 @@ open Log
 
 type append_entries_req = {
   term : int;
-  leader_id : int;
+  leader_id : string;
   prev_log_index : int;
   prev_log_term : int;
   entries : entry list;

@@ -14,10 +14,10 @@ open Yojson.Basic.Util
 type role = | Follower | Candidate | Leader
 
 type state = {
-    id : int;
+    id : string;
     role : role;
     currentTerm : int;
-    votedFor : int option;
+    votedFor : string option;
     log : entry list;
     lastEntry : entry option;
     commitIndex : int;
@@ -36,7 +36,7 @@ let generate_heartbeat =
     (Random.int range) + lower
 
 let serv_state = ref {
-    id = -1;
+    id = "";
     role = Follower;
     currentTerm = 0;
     votedFor = None;
@@ -112,8 +112,14 @@ let send_msg str oc =
     Lwt_io.write_line oc str; Lwt_io.flush oc
 
 (* LOG REPLICATIONS *)
-let req_append_entries msg oc = failwith "u suck"
-let res_append_entries msg oc = failwith "u suck"
+let req_append_entries msg oc = failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ "
+let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
 let req_request_vote ballot oc =
     let json = 
@@ -127,7 +133,7 @@ let req_request_vote ballot oc =
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
 let res_request_vote msg oc =
-    let candidate_id = msg |> member "candidate_id" |> to_int in
+    let candidate_id = msg |> member "candidate_id" |> to_string in
     let continue = match !serv_state.votedFor with
                     | None -> true
                     | Some id -> id=candidate_id in
@@ -170,9 +176,11 @@ let get_entry_term e_opt =
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "{\"type\":\"heartbeat\"}"; Lwt_io.flush oc;
+    (*TODO include leader id*)
     print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
+(*TODO change heartbeat to an empty RPC*)
 let send_heartbeats () =
     let lst_o = !output_channels in
     print_endline " fdsafds";
@@ -319,18 +327,30 @@ let handle_vote_res msg hi =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
+let process_heartbeat msg =
+    failwith "parse the leader_id and change your state"
+
+
+let handle_client_as_leader msg =
+    failwith "
+    1. parse the value field, leader append to own log -- see mli
+     (leader's current term & list.length for index)
+    2. call req append entries"
+
+
 let handle_message msg oc =
     serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "heartbeat" -> print_endline "this is a heart";
+    | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> res_request_vote msg oc; ()
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower}; ()
     | "appd_res" -> ()
+    | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
     | _ -> ()
 
 
