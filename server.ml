@@ -127,11 +127,12 @@ let req_request_vote ballot oc =
     let json = 
       "{
         \"type\": vote_req,
-        \"term\":" ^ (string_of_int ballot.term) ^",
-        \"candidate_id\":" ^ ballot.candidate_id ^ ",
-        \"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",
-        \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ 
-      "}"
+        \"term\": \"" ^ (string_of_int ballot.term) ^"\",
+        \"candidate_id\": \"" ^ ballot.candidate_id ^ "\",
+        \"last_log_index\": \"" ^ (string_of_int ballot.last_log_index) ^ "\",
+        \"last_log_term\": \"" ^ (
+        string_of_int ballot.last_log_term) ^ "\"
+      }"
     in send_msg json oc
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
@@ -151,8 +152,8 @@ let res_request_vote msg oc =
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
         let json = 
           "{
-            \"current_term\":" ^ (string_of_int !serv_state.currentTerm) ^ ",
-            \"vote_granted\":" ^ (string_of_bool vote_granted) ^ ",
+            \"current_term\": \"" ^ (string_of_int !serv_state.currentTerm) ^ "\",
+            \"vote_granted\": \"" ^ (string_of_bool vote_granted) ^ "\",
           }"
          in send_msg json oc
     | None -> failwith "kek"
@@ -482,7 +483,7 @@ let startserverest port_num =
 
 
 let rec st port_num =
-    serv_state := {!serv_state with id=(!serv_state.id ^ ":" ^ (string_of_int port_num))};
+    serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
