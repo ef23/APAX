@@ -111,7 +111,7 @@ let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
 
 
-let output_channels = ref []
+let channels = ref []
 
 let listen_address = get_my_addr ()
 let port = 9000
@@ -171,7 +171,7 @@ let json_es entries = failwith "jsonify the entires liest"
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
  * index [pli] with entry term [plt] *)
-let mismatch_log my_log prev_log_index prev_log_term = 
+let mismatch_log my_log prev_log_index prev_log_term =
     failwith "impl"
 
 
@@ -240,11 +240,11 @@ let res_request_vote msg oc =
  * [req_append_entries msg]
  * [req_request_vote msg] *)
 let rec send_rpcs f =
-    let lst_o = !output_channels in
+    let lst_o = !channels in
     let rec send_to_ocs lst =
       match lst with
       | [] -> print_endline "sent all rpcs!"
-      | h::t -> f h; send_to_ocs t in
+      | (ic, oc)::t -> f oc; send_to_ocs t in
     send_to_ocs lst_o
 
 (* [get_entry_term e_opt] takes in the value of a state's last entry option and
@@ -262,17 +262,17 @@ let rec send_heartbeat oc () =
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
 let send_heartbeats () =
-    let lst_o = !output_channels in
+    let lst_o = !channels in
     print_endline " fdsafds";
     let rec send_to_ocs lst =
       match lst with
-      | h::t ->
+      | (ic, oc)::t ->
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
           Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
           in
-          ignore (Thread.create start_timer h); send_to_ocs t;
+          ignore (Thread.create start_timer oc); send_to_ocs t;
         end
       | [] -> () in
     print_endline "number of ocs";
@@ -300,7 +300,7 @@ let rec start_election () =
         last_log_term = get_entry_term (!serv_state.lastEntry)
     } in
     print_endline "sending rpcs...";
-    send_rpcs (req_request_vote ballot)
+    send_rpcs (req_request_vote ballot);
     print_endline "sfjadsljjgdaksgjjdkasfjkdsalk";
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
@@ -479,15 +479,6 @@ let handle_message msg oc =
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-
-(* [init_server ()] starts up this server as a follower and anticipates an
- * election. That is, this should ONLY be called as soon as the server begins
- * running (and after it has set up connections with all other servers) *)
-let init_server () =
-    change_heartbeat ();
-    Thread.create (init_follower);
-    Async.Scheduler.go (); ()
-
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun msg ->
@@ -497,16 +488,31 @@ let rec handle_connection ic oc () =
             (handle_connection ic oc) ();
         | None -> Lwt_log.info "Connection closed" >>= return)
 
+(* [init_server ()] starts up this server as a follower and anticipates an
+ * election. That is, this should ONLY be called as soon as the server begins
+ * running (and after it has set up connections with all other servers) *)
+let init_server () =
+    let rec listen_connection orig_lst lst () =
+        match lst with
+        | [] -> listen_connection orig_lst orig_lst ()
+        | (ic, oc)::t -> begin handle_connection ic oc ();
+                               listen_connection orig_lst t ()
+                         end in
+    change_heartbeat ();
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (listen_connection !channels !channels);
+    Thread.create (init_follower);
+    Async.Scheduler.go (); ()
+
 let accept_connection conn =
     print_endline "accepted";
     let fd, _ = conn in
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
-    let otherl = !output_channels in
-    output_channels := (oc::otherl);
+    let otherl = !channels in
+    channels := ((ic, oc)::otherl);
     let iplistlen = List.length (!serv_state.neighboringIPs) in
-    if (List.length !output_channels)=iplistlen then init_server ();
+    if (List.length !channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -540,10 +546,10 @@ let main_client address portnum =
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
-        let otherl = !output_channels in
-             output_channels := (oc::otherl);
+        let otherl = !channels in
+             channels := ((ic, oc)::otherl);
              let iplistlen = List.length (!serv_state.neighboringIPs) in
-             if (List.length !output_channels)=iplistlen then init_server ();
+             if (List.length !channels)=iplistlen then init_server ();
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
