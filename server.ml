@@ -245,7 +245,7 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
-let last_entry_commit = failwith "asdklfj"
+let last_entry_idx () = match !serv_state.log with | (i,_)::t -> i | [] -> 0 
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
@@ -266,7 +266,7 @@ let handle_ae_req msg oc =
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
     if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit}; (* 5 *)
+    then serv_state := {!serv_state with commitIndex = min leader_commit (last_entry_idx ())}; (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
