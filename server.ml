@@ -185,7 +185,7 @@ let json_es (entries:string): entry list =
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
  * index [pli] with entry term [plt]; else false *)
-let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term = 
+let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
     (* returns nth entry of the log *)
     if prev_log_index > (List.length my_log + 1) then true
     else
@@ -195,19 +195,19 @@ let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
 
 (* [process_conflicts entries] goes through the server's log and removes entries
  * that conflict (same index different term) with those in [entries] *)
-let process_conflicts entries = 
+let process_conflicts entries =
     (* [does_conflict e1 e2] returns true if e1 has a different term than e2
      * -requires e1 and e2 to have the same index *)
-    let does_conflict log_e new_e = 
+    let does_conflict log_e new_e =
         if log_e.entryTerm = new_e.entryTerm then false else true in
 
-    (* given a new entry e, go through the log and return a new (shorter) log 
+    (* given a new entry e, go through the log and return a new (shorter) log
      * if we find a conflict; otherwise return the original log *)
-    let rec iter_log old_l new_l new_e = 
+    let rec iter_log old_l new_l new_e =
         match new_l with
         | [] -> old_l
-        | (i,log_e)::t -> 
-            if (i = new_e.index && does_conflict log_e new_e) then t 
+        | (i,log_e)::t ->
+            if (i = new_e.index && does_conflict log_e new_e) then t
             else iter_log old_l t new_e in
 
     let old_log = !serv_state.log in
@@ -218,7 +218,7 @@ let process_conflicts entries =
         match el with
         | [] -> short_log
         | e::t -> let new_log = iter_log old_log old_log e in
-            if (List.length new_log < List.length short_log) then 
+            if (List.length new_log < List.length short_log) then
                 iter_entries t new_log
             else iter_entries t short_log in
 
@@ -227,18 +227,23 @@ let process_conflicts entries =
 
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
-    match entries with
-    | [] -> ()
-    | h::t ->
-        begin
-            if List.exists (fun (_,e) -> e = h) !serv_state.log
-            then append_new_entries t
-            else
-            let old_st_log = !serv_state.log in
-            let new_addition = ((List.length old_st_log) + 1, h) in
-            serv_state := {!serv_state with log = new_addition::old_st_log};
-            append_new_entries t
-        end
+    let rec append_new (entries: entry list):unit =
+        match entries with
+        | [] -> ()
+        | h::t ->
+            begin
+                if List.exists (fun (_,e) -> e = h) !serv_state.log
+                then append_new t
+                else
+                let old_st_log = !serv_state.log in
+                let new_ind = List.length old_st_log + 1 in
+                let new_entry = {h with index = new_ind} in
+                let new_addition = (new_ind, new_entry) in
+                serv_state := {!serv_state with log = new_addition::old_st_log};
+                append_new t
+            end
+    in
+    append_new entries
 
 let last_entry_commit = failwith "asdklfj"
 
