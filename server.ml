@@ -255,6 +255,7 @@ let rec start_election () =
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot)
+    print_endline "sfjadsljjgdaksgjjdkasfjkdsalk";
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
