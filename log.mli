@@ -9,7 +9,7 @@
  * -term when the entry was received by the leader
  * -entry index indicating that it is the ith entry in the log *)
 type entry = {
-  command : string;
+  value : int;
   entryTerm : int;
   index : int;
 }

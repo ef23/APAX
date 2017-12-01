@@ -1,5 +1,5 @@
 type entry = {
-  command : string;
+  value : int;
   entryTerm : int;
   index : int;
 }
