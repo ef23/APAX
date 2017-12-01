@@ -5,11 +5,11 @@
  * each entry contains all the necessary information for determining
  * whether two entrys can be matched/compared. This includes, but is not
  * limited to:
- * -command for the state machine
+ * -value for the state machine
  * -term when the entry was received by the leader
  * -entry index indicating that it is the ith entry in the log *)
 type entry = {
-  command : string;
+  value: int;
   entryTerm : int;
   index : int;
 }
@@ -18,6 +18,9 @@ type entry = {
  * and compare entries. *)
 module type Log = sig
 	type log
+
+	(* [empty] returns an empty log *)
+	val empty: log
 
 	(* [add l e] returns a log l' containing e and all of the items in l *)
 	val add : log -> entry -> log
