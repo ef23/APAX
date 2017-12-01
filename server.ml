@@ -125,14 +125,7 @@ let res_append_entries msg oc = failwith "parse every json field in AE RPC. foll
 
 let req_request_vote ballot oc =
     let json = 
-      "{
-        \"type\": vote_req,
-        \"term\": \"" ^ (string_of_int ballot.term) ^"\",
-        \"candidate_id\": \"" ^ ballot.candidate_id ^ "\",
-        \"last_log_index\": \"" ^ (string_of_int ballot.last_log_index) ^ "\",
-        \"last_log_term\": \"" ^ (
-        string_of_int ballot.last_log_term) ^ "\"
-      }"
+      "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
     in send_msg json oc
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
@@ -151,10 +144,7 @@ let res_request_vote msg oc =
         let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
         let json = 
-          "{
-            \"current_term\": \"" ^ (string_of_int !serv_state.currentTerm) ^ "\",
-            \"vote_granted\": \"" ^ (string_of_bool vote_granted) ^ "\",
-          }"
+          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     | None -> failwith "kek"
 
@@ -352,10 +342,10 @@ let handle_message msg oc =
     match msg_type with
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> res_request_vote msg oc; ()
+    | "vote_req" -> begin print_endline "this is vote req"; res_request_vote msg oc; () end
     | "vote_res" -> handle_vote_res msg oc; ()
-    | "appd_req" -> if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower}; ()
+    | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
+                    then serv_state := {!serv_state with role = Follower}; () end
     | "appd_res" -> ()
     | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
     | _ -> ()
