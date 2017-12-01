@@ -30,11 +30,15 @@ type state = {
     internal_timer : int;
 }
 
+let _ = Random.self_init ()
+
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
     let lower = 150 in
     let range = 150 in
-    (Random.int range) + lower
+    let timer = (Random.int range) + lower in
+    print_endline ("timer:"^(string_of_int timer));
+    timer
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -98,7 +102,7 @@ let change_heartbeat () =
             internal_timer = new_heartbeat;
         }
 
-let dec_timer () = print_endline "dec timer"; serv_state :=
+let dec_timer () = serv_state :=
     {
         !serv_state with internal_timer = (!serv_state.internal_timer - 1);
     }
@@ -316,8 +320,8 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-    print_endline "act follower";
-    print_endline (string_of_int !serv_state.internal_timer);
+  (*   print_endline "act follower";
+    print_endline (string_of_int !serv_state.internal_timer); *)
     (* check if the timeout has expired, and that it has voted for no one *)
     if !serv_state.internal_timer=0 && (!serv_state.votedFor = None)
     then (serv_state := {!serv_state with role=Candidate}; init_candidate ())
@@ -432,7 +436,7 @@ let handle_message msg oc =
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
     change_heartbeat ();
-    init_follower ();
+    Thread.create (init_follower);
     Async.Scheduler.go (); ()
 
 let rec handle_connection ic oc () =
@@ -538,7 +542,6 @@ let startserverest port_num =
 
 
 let rec st port_num =
-    Random.self_init ();
     serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
