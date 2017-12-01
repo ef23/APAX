@@ -41,7 +41,7 @@ let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let serv_state = ref {
-    id = Unix.string_of_inet_addr (get_my_addr ());
+    id = "";
     leader_id = "";
     role = Follower;
     currentTerm = 0;
