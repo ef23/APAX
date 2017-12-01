@@ -19,7 +19,7 @@ type state = {
     role : role;
     currentTerm : int;
     votedFor : string option;
-    log : entry list;
+    log : (int * entry) list;
     lastEntry : entry option;
     commitIndex : int;
     lastApplied : int;
@@ -154,7 +154,53 @@ let req_append_entries (msg : append_entries_req) oc =
 
  " *)
 
-let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
+(*stringifying*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{
+        \"success\":" ^ string_of_bool ae_res.success ^",
+        \"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+
+      "}"
+    in send_msg json oc
+(* [json_es entries] should return a list of entries parsed from the string [entries]*)
+let json_es entries = failwith "jsonify the entires liest"
+
+(* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
+ * index [pli] with entry term [plt] *)
+let mismatch_log my_log prev_log_index prev_log_term = 
+    failwith "impl"
+
+
+let process_conflicts entries = failwith "Uaksdfl"
+
+let append_new_entries entries = failwith "Unasdlkjfadsf"
+
+let last_entry_commit = failwith "asdklfj"
+
+let handle_ae_req msg oc =
+    let ap_term = msg |> member "ap_term" |> to_int in
+    let leader_id = msg |> member "leader_id" |> to_string in
+    let prev_log_index = msg |> member "prev_log_index" |> to_int in
+    let prev_log_term = msg |> member "prev_log_term" |> to_int in
+    let entries = msg |> member "entries" |> to_string |> json_es in
+    let leader_commit = msg |> member "leader_commit" |> to_int in
+    let success_bool =
+        if ap_term < !serv_state.currentTerm then false (* 1 *)
+        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false (* 2 *)
+        else true
+    in
+    let ae_res = {
+        success = success_bool;
+        current_term = !serv_state.currentTerm;
+    } in
+    process_conflicts entries; (* 3 *)
+    append_new_entries entries; (* 4 *)
+    if leader_commit > !serv_state.commitIndex
+    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit}; (* 5 *)
+    res_append_entries ae_res oc
+
+    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
 
 let req_request_vote ballot oc =
@@ -385,7 +431,8 @@ let handle_message msg oc =
     | "vote_req" -> begin print_endline "this is vote req"; res_request_vote msg oc; () end
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower}; () end
+                    then serv_state := {!serv_state with role = Follower};
+                    handle_ae_req msg oc; () end
     | "appd_res" -> ()
     | "client" ->
         (* TODO redirect client to Leader *)
@@ -393,11 +440,11 @@ let handle_message msg oc =
             (print_endline !serv_state.leader_id; ())
         else
             (* create the append_entries_rpc *)
-            (* using -1 to indicate no previous entry *)
+            (* using 0 to indicate no previous entry *)
             let p_log_idx =
-                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.index) in
+                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.index) in
             let p_log_term =
-                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.entryTerm) in
+                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.entryTerm) in
 
             let new_entry = {
                     value = msg |> member "value" |> to_int;
@@ -415,7 +462,8 @@ let handle_message msg oc =
             } in
 
             let old_log = !serv_state.log in
-            serv_state := {!serv_state with log = (new_entry::old_log)};
+            let new_idx = (List.length old_log) + 1 in
+            serv_state := {!serv_state with log = ((new_idx,new_entry)::old_log)};
             req_append_entries rpc oc; ()
     | _ -> ()
 
