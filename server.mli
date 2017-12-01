@@ -39,12 +39,12 @@ val res_append_entries : append_entries_res -> Lwt_io.output_channel -> unit
 (* [req_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
-val req_request_vote : vote_req -> Lwt_io.output_channel -> unit
+val req_request_vote : vote_req -> Lwt_io.output_channel -> unit Lwt.t
 
 (* [res_request_vote str] sends an requestVote call
  * [str] is the message we want to send
  *)
-val res_request_vote : vote_req -> Lwt_io.output_channel -> unit
+val res_request_vote : Yojson.Basic.json -> Lwt_io.output_channel -> unit Lwt.t
 
 (* Client-server interaction: Client has a list of the server ips they can
  * connect to; can communicate with any server and the server will send the data

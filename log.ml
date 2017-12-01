@@ -9,6 +9,8 @@ type entry = {
 module type Log = sig
   type log
 
+  val empty: log
+
   (* [add l e] returns a log l' containing e and all of the items in l *)
   val add : log -> entry -> log
 
@@ -24,5 +26,15 @@ module type Log = sig
   (* [compare e1 e2] returns true if e1 and e2 are the same entries,
    * false otherwise *)
   val compare : entry -> entry -> bool
+end
+
+module ServerLog = struct
+  type log = entry list
+  let empty = []
+  let add l e = failwith "Unimplemented"
+  let remove l e = failwith "Unimplemented"
+
+
+
 end
 

@@ -1,6 +1,6 @@
 type vote_req = {
   term : int;
-  candidate_id : int;
+  candidate_id : string;
   last_log_index : int;
   last_log_term : int
 }

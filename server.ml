@@ -14,10 +14,11 @@ open Yojson.Basic.Util
 type role = | Follower | Candidate | Leader
 
 type state = {
-    id : int;
+    id : string;
+    leader_id: string;
     role : role;
     currentTerm : int;
-    votedFor : int option;
+    votedFor : string option;
     log : entry list;
     lastEntry : entry option;
     commitIndex : int;
@@ -31,12 +32,13 @@ type state = {
 
 (* the lower range of the election timeout, in this case 150-300ms*)
 let generate_heartbeat =
-    let lower = 150 in
-    let range = 150 in
+    let lower = 1500 in
+    let range = 1500 in
     (Random.int range) + lower
 
 let serv_state = ref {
-    id = -1;
+    id = "";
+    leader_id = "";
     role = Follower;
     currentTerm = 0;
     votedFor = None;
@@ -90,7 +92,7 @@ let change_heartbeat () =
             internal_timer = new_heartbeat;
         }
 
-let dec_timer () = serv_state :=
+let dec_timer () = print_endline "dec timer"; serv_state :=
     {
         !serv_state with internal_timer = (!serv_state.internal_timer - 1);
     }
@@ -107,9 +109,19 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
+let send_msg str oc =
+    print_endline ("sending: "^str);
+    Lwt_io.write_line oc str; Lwt_io.flush oc
+
 (* LOG REPLICATIONS *)
-let req_append_entries msg oc = failwith "u suck"
-let res_append_entries msg oc = failwith "u suck"
+let req_append_entries msg oc = failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ "
+let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
 let req_request_vote ballot oc =
     let json = {|
@@ -119,13 +131,11 @@ let req_request_vote ballot oc =
         "last_log_index": ballot.last_log_ind,
         "last_log_term": ballot.last_log_term
       }
-    |} in ()
+    |} in send_msg json oc
 
-let res_request_vote msg oc = failwith "succ my zucc"
-
-(* [handle_vote_req msg] handles receiving a vote request message *)
-let handle_vote_req msg oc =
-    let candidate_id = msg |> member "candidate_id" |> to_int in
+(* [res_request_vote msg oc] handles receiving a vote request message *)
+let res_request_vote msg oc =
+    let candidate_id = msg |> member "candidate_id" |> to_string in
     let continue = match !serv_state.votedFor with
                     | None -> true
                     | Some id -> id=candidate_id in
@@ -143,19 +153,20 @@ let handle_vote_req msg oc =
             "current_term":!serv_state.currentTerm,
             "vote_granted":vote_granted,
           }
-        |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
+        |} in send_msg json oc
     | None -> failwith "kek"
 
-(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
+(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
  * [req_append_entries msg]
  * [req_request_vote msg] *)
-let rec send_rpcs f ips =
-    match ips with
-    | [] -> ()
-    | ip::t ->
-        let _ = f ip in
-        send_rpcs f t
+let rec send_rpcs f =
+    let lst_o = !output_channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | [] -> print_endline "sent all rpcs!"
+      | h::t -> f h; send_to_ocs t in
+    send_to_ocs lst_o
 
 (* [get_entry_term e_opt] takes in the value of a state's last entry option and
  * returns the last entry's term, or -1 if there was no last entry (aka the log
@@ -167,9 +178,11 @@ let get_entry_term e_opt =
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc "{\"type\":\"heartbeat\"}"; Lwt_io.flush oc;
+    (*TODO include leader id*)
     print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
+(*TODO change heartbeat to an empty RPC*)
 let send_heartbeats () =
     let lst_o = !output_channels in
     print_endline " fdsafds";
@@ -192,6 +205,7 @@ let send_heartbeats () =
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
+    print_endline "election started!";
     (* increment term and vote for self *)
     let curr_term = !serv_state.currentTerm in
     serv_state := {
@@ -207,7 +221,8 @@ let rec start_election () =
         last_log_index = !serv_state.commitIndex;
         last_log_term = get_entry_term (!serv_state.lastEntry)
     } in
-    send_rpcs (req_request_vote ballot) neighbors
+    print_endline "sending rpcs...";
+    send_rpcs (req_request_vote ballot)
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
@@ -242,8 +257,8 @@ and act_candidate () =
     (* this will be continuously run to check if the election has been won by
      * this candidate *)
     let rec check_win_election () =
-        print_endline (string_of_int (List.length !serv_state.neighboringIPs));
-        print_endline (string_of_int !vote_counter);
+        (* print_endline (string_of_int (List.length !serv_state.neighboringIPs));
+        print_endline (string_of_int !vote_counter); *)
         (* if majority of votes, proceed to win election *)
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
             then win_election ()
@@ -314,18 +329,32 @@ let handle_vote_res msg hi =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
+(*[process_heartbeat msg] handles receiving heartbeats from the leader *)
+let process_heartbeat msg =
+    let l_id = msg |> member "leader_id" |> to_string in
+    serv_state := {!serv_state with leader_id = l_id; internal_timer = !serv_state.heartbeat}
+
+
+let handle_client_as_leader msg =
+    failwith "
+    1. parse the value field, leader append to own log -- see mli
+     (leader's current term & list.length for index)
+    2. call req append entries"
+
+
 let handle_message msg oc =
     serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "heartbeat" -> print_endline "this is a heart";
+    | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> handle_vote_req msg oc; ()
+    | "vote_req" -> res_request_vote msg oc; ()
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower}; ()
     | "appd_res" -> ()
+    | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
     | _ -> ()
 
 
@@ -346,8 +375,7 @@ let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
     init_follower ();
-    (* any more scheduled tasks will run after this *)
-    Async.Scheduler.go ()
+    Async.Scheduler.go (); ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -366,6 +394,8 @@ let accept_connection conn =
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
     let otherl = !output_channels in
     output_channels := (oc::otherl);
+    let iplistlen = List.length (!serv_state.neighboringIPs) in
+    if (List.length !output_channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -401,6 +431,8 @@ let main_client address portnum =
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !output_channels in
              output_channels := (oc::otherl);
+             let iplistlen = List.length (!serv_state.neighboringIPs) in
+             if (List.length !output_channels)=iplistlen then init_server ();
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
@@ -446,13 +478,12 @@ let startserverest port_num =
 
     Lwt_main.run @@ serve ();;
 
-let startserverest2 port_num =
-    print_endline "ajsdfjasjdfjasjf";
+
+let rec st port_num =
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
+    Lwt_main.run @@ serve ();
+    (* any more scheduled tasks will run after this *)
 
-    init_server ();
-
-    Lwt_main.run @@ serve ();;
