@@ -349,7 +349,7 @@ let handle_message msg oc =
     | "client" -> 
         (* TODO redirect client to Leader *)
         if !serv_state.role <> Leader then 
-            (print_endline !serv_state.leader_i; ())
+            (print_endline !serv_state.leader_id; ())
         else
             (* create the append_entries_rpc *)
             (* using -1 to indicate no previous entry *)
@@ -365,7 +365,7 @@ let handle_message msg oc =
                 } in
 
             let rpc = {
-                term = !serv_state.currentTerm;
+                ap_term = !serv_state.currentTerm;
                 leader_id = !serv_state.id;
                 prev_log_index = p_log_idx;
                 prev_log_term = p_log_term;
