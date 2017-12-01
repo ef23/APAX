@@ -192,7 +192,20 @@ let mismatch_log my_log prev_log_index prev_log_term =
 
 let process_conflicts entries = failwith "Uaksdfl"
 
-let append_new_entries entries = failwith "Unasdlkjfadsf"
+let rec append_new_entries (entries : entry list) : unit =
+    let entries = List.rev_append entries [] in
+    match entries with
+    | [] -> ()
+    | h::t ->
+        begin
+            if List.exists (fun (_,e) -> e = h) !serv_state.log
+            then append_new_entries t
+            else
+            let old_st_log = !serv_state.log in
+            let new_addition = ((List.length old_st_log) + 1, h) in
+            serv_state := {!serv_state with log = new_addition::old_st_log};
+            append_new_entries t
+        end
 
 let last_entry_commit = failwith "asdklfj"
 
