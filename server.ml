@@ -15,6 +15,7 @@ type role = | Follower | Candidate | Leader
 
 type state = {
     id : string;
+    leader_id: string;
     role : role;
     currentTerm : int;
     votedFor : string option;
@@ -41,6 +42,7 @@ let get_my_addr () =
 
 let serv_state = ref {
     id = Unix.string_of_inet_addr (get_my_addr ());
+    leader_id = "";
     role = Follower;
     currentTerm = 0;
     votedFor = None;
@@ -328,8 +330,10 @@ let handle_vote_res msg hi =
     let voted = msg |> member "vote_granted" |> to_bool in
     if voted then vote_counter := !vote_counter + 1
 
+(*[process_heartbeat msg] handles receiving heartbeats from the leader *)
 let process_heartbeat msg =
-    failwith "parse the leader_id and change your state"
+    let l_id = msg |> member "leader_id" |> to_string in
+    serv_state := {!serv_state with leader_id = l_id; internal_timer = !serv_state.heartbeat}
 
 
 let handle_client_as_leader msg =
