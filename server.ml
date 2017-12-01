@@ -35,8 +35,12 @@ let generate_heartbeat =
     let range = 1500 in
     (Random.int range) + lower
 
+
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
 let serv_state = ref {
-    id = "";
+    id = Unix.string_of_inet_addr (get_my_addr ());
     role = Follower;
     currentTerm = 0;
     votedFor = None;
@@ -50,10 +54,6 @@ let serv_state = ref {
     matchIndexList = [];
     internal_timer = 0;
 }
-
-
-let get_my_addr () =
-    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let read_neighboring_ips port_num =
   let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
@@ -124,9 +124,10 @@ let res_append_entries msg oc = failwith "parse every json field in AE RPC. foll
 let req_request_vote ballot oc =
     let json = 
       "{
+        \"type\": vote_req,
         \"term\":" ^ (string_of_int ballot.term) ^",
-        \"candidate_id\":" ^ ballot.cand_id ^ ",
-        \"last_log_index\": " ^ (string_of_int ballot.last_log_ind) ^ ",
+        \"candidate_id\":" ^ ballot.candidate_id ^ ",
+        \"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",
         \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ 
       "}"
     in send_msg json oc
@@ -339,6 +340,7 @@ let handle_client_as_leader msg =
 
 
 let handle_message msg oc =
+    print_endline "i am in handle message";
     serv_state := {!serv_state with internal_timer = !serv_state.heartbeat};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
@@ -476,6 +478,7 @@ let startserverest port_num =
 
 
 let rec st port_num =
+    serv_state := {!serv_state with id=(!serv_state.id ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
