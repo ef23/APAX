@@ -503,10 +503,10 @@ let handle_message msg oc =
 let init_server () =
     change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
-    Async.Scheduler.go (); ()
+    Async.Scheduler.go (); print_endline "this is not blocking"; ()
 
 let rec handle_connection ic oc () =
-    Lwt_io.read_line_opt ic >>=
+    Lwt.bind (Lwt_io.read_line_opt ic) 
     (fun msg ->
         match msg with
         | Some m ->
@@ -556,11 +556,12 @@ let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
+        print_endline (string_of_int (List.length (!serv_state.neighboringIPs)));
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !output_channels in
              output_channels := (oc::otherl);
              let iplistlen = List.length (!serv_state.neighboringIPs) in
-             if (List.length !output_channels)=iplistlen then init_server ();
+             if (List.length !output_channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
