@@ -153,10 +153,19 @@ let req_append_entries (msg : append_entries_req) oc =
 
  " *)
 
-let res_append_entries ae_res oc = failwith "Unimplemented"
+(*stringifying*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{
+        \"success\":" ^ string_of_bool ae_res.success ^",
+        \"currentTerm\":"  ^ string_of_int ae_res.current_term ^
 
+      "}"
+    in send_msg json oc
+(*janice*)
 let json_es entries = failwith "jsonify the entires liest"
 
+(**)
 let mismatch_log my_log prev_log_index prev_log_term = failwith "dakjsfakjd"
 
 let process_conflicts () = failwith "Uaksdfl"
@@ -417,7 +426,7 @@ let handle_message msg oc =
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower};
-                    res_append_entries msg oc; () end
+                    handle_ae_req msg oc; () end
     | "appd_res" -> ()
     | "client" ->
         (* TODO redirect client to Leader *)
