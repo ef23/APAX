@@ -118,9 +118,8 @@ let req_append_entries msg oc = failwith
  "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
  listen for responses.
  - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- "
+ - then when majority, incr commit index"
+ 
 let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
 let req_request_vote ballot oc =
@@ -356,7 +355,36 @@ let handle_message msg oc =
     | "appd_req" -> if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower}; ()
     | "appd_res" -> ()
-    | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
+    | "client" -> 
+        (* TODO redirect client to Leader *)
+        if !serv_state.role <> Leader then 
+            (print_endline !serv_state.leader_i; ())
+        else
+            (* create the append_entries_rpc *)
+            (* using -1 to indicate no previous entry *)
+            let p_log_idx = 
+                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.index) in
+            let p_log_term = 
+                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.entryTerm) in
+
+            let new_entry = {
+                    value = msg |> member "value" |> to_int;
+                    entryTerm = msg |> member "entryTerm" |> to_int;
+                    index = msg |> member "index" |> to_int;
+                } in
+
+            let rpc = {
+                term = !serv_state.currentTerm;
+                leader_id = !serv_state.id;
+                prev_log_index = p_log_idx;
+                prev_log_term = p_log_term;
+                entries = [];
+                leader_commit = !serv_state.commitIndex;
+            } in
+
+            let old_log = !serv_state.log in
+            serv_state := {!serv_state with log = (new_entry::old_log)};
+            req_append_entries rpc oc; ()
     | _ -> ()
 
 
