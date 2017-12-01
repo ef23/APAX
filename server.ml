@@ -19,7 +19,7 @@ type state = {
     role : role;
     currentTerm : int;
     votedFor : string option;
-    log : entry list;
+    log : (int * entry) list;
     lastEntry : entry option;
     commitIndex : int;
     lastApplied : int;
@@ -169,8 +169,11 @@ let res_append_entries (ae_res:append_entries_res) oc =
 (* [json_es entries] should return a list of entries parsed from the string [entries]*)
 let json_es entries = failwith "jsonify the entires liest"
 
-(**)
-let mismatch_log my_log prev_log_index prev_log_term = failwith "dakjsfakjd"
+(* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
+ * index [pli] with entry term [plt] *)
+let mismatch_log my_log prev_log_index prev_log_term = 
+    failwith "impl"
+
 
 let process_conflicts entries = failwith "Uaksdfl"
 
@@ -439,11 +442,11 @@ let handle_message msg oc =
             (print_endline !serv_state.leader_id; ())
         else
             (* create the append_entries_rpc *)
-            (* using -1 to indicate no previous entry *)
+            (* using 0 to indicate no previous entry *)
             let p_log_idx =
-                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.index) in
+                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.index) in
             let p_log_term =
-                (match !serv_state.lastEntry with | None -> -1 | Some e -> e.entryTerm) in
+                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.entryTerm) in
 
             let new_entry = {
                     value = msg |> member "value" |> to_int;
@@ -461,7 +464,8 @@ let handle_message msg oc =
             } in
 
             let old_log = !serv_state.log in
-            serv_state := {!serv_state with log = (new_entry::old_log)};
+            let new_idx = (List.length old_log) + 1 in
+            serv_state := {!serv_state with log = ((new_idx,new_entry)::old_log)};
             req_append_entries rpc oc; ()
     | _ -> ()
 
