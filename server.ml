@@ -122,26 +122,26 @@ let send_msg str oc =
 
 (* LOG REPLICATIONS *)
 
-let stringify_entry e:string =
+let stringify_entry (e:entry): string =
   let json =
-    "{
-      \"value\":" ^ (string_of_int e.value) ^ ",
-      \"entryTerm\":" ^ (string_of_int e.entryTerm) ^ ",
-      \"index\":" ^ (string_of_int e.index) ^
+    "{" ^
+      "\"value\":" ^ (string_of_int e.value) ^ "," ^
+      "\"entryTerm\":" ^ (string_of_int e.entryTerm) ^ "," ^
+      "\"index\":" ^ (string_of_int e.index) ^
     "}"
   in json
 
+
 let req_append_entries (msg : append_entries_req) oc =
     let json =
-       "{
-        \"type\": appd_req,
-        \"term\":" ^ (string_of_int msg.ap_term) ^",
-        \"leader_id\":" ^ (msg.leader_id) ^ ",
-        \"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ ",
-        \"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ ",
-        \"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ ",
-        \"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+       "{" ^
+        "\"type\": appd_req,\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
 (*
@@ -154,22 +154,41 @@ let req_append_entries (msg : append_entries_req) oc =
 
  " *)
 
-(*stringifying*)
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
 let res_append_entries (ae_res:append_entries_res) oc =
     let json =
-      "{
-        \"success\":" ^ string_of_bool ae_res.success ^",
-        \"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-
+      "{" ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
       "}"
     in send_msg json oc
-(* [json_es entries] should return a list of entries parsed from the string [entries]*)
-let json_es entries = failwith "jsonify the entires liest"
+
+(* [json_es entries] should return a list of entries parsed from the string [entries].
+ * - requires: [entries] has at least one entry in it
+ *)
+let json_es (entries:string): entry list =
+    let entries_str_lst =  Str.split (Str.regexp "[\n]+") entries in
+    let extract_record e =
+        let json =  Yojson.Basic.from_string e in
+        let value = json |> member "value" |> to_int in
+        let entry_term = json |> member "entryTerm" |> to_int in
+        let ind = json |> member "index" |> to_int in
+        {
+            value = value;
+            entryTerm = entry_term;
+            index = ind;
+        }
+    in
+    let ocaml_entries = List.map extract_record entries_str_lst in
+    ocaml_entries
+
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
  * index [pli] with entry term [plt] *)
-let mismatch_log my_log prev_log_index prev_log_term = 
+let mismatch_log my_log prev_log_index prev_log_term =
     failwith "impl"
+
 
 
 let process_conflicts entries = failwith "Uaksdfl"
