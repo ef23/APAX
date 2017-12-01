@@ -90,7 +90,7 @@ let change_heartbeat () =
             internal_timer = new_heartbeat;
         }
 
-let dec_timer () = serv_state :=
+let dec_timer () = print_endline "dec timer"; serv_state :=
     {
         !serv_state with internal_timer = (!serv_state.internal_timer - 1);
     }
@@ -350,7 +350,8 @@ let handle_message msg oc =
 let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
-    init_follower ()
+    init_follower ();
+    Async.Scheduler.go (); ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -454,12 +455,11 @@ let startserverest port_num =
     Lwt_main.run @@ serve ();;
 
 
-let rec startserverest2 port_num serve =
+let rec st port_num =
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (Lwt_main.run @@ serve ());
+    Lwt_main.run @@ serve ();
     (* any more scheduled tasks will run after this *)
-    Async.Scheduler.go ()
 
