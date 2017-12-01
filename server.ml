@@ -31,8 +31,8 @@ type state = {
 
 (* the lower range of the election timeout, in this case 150-300ms*)
 let generate_heartbeat =
-    let lower = 150 in
-    let range = 150 in
+    let lower = 1500 in
+    let range = 1500 in
     (Random.int range) + lower
 
 let serv_state = ref {
@@ -90,7 +90,7 @@ let change_heartbeat () =
             internal_timer = new_heartbeat;
         }
 
-let dec_timer () = serv_state :=
+let dec_timer () = print_endline "dec timer"; serv_state :=
     {
         !serv_state with internal_timer = (!serv_state.internal_timer - 1);
     }
@@ -106,6 +106,10 @@ let port = 9000
 let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
+
+let send_msg str oc =
+    print_endline ("sending: "^str);
+    Lwt_io.write_line oc str; Lwt_io.flush oc
 
 (* LOG REPLICATIONS *)
 let req_append_entries msg oc = failwith
@@ -125,12 +129,10 @@ let req_request_vote ballot oc =
         "last_log_index": ballot.last_log_ind,
         "last_log_term": ballot.last_log_term
       }
-    |} in ()
+    |} in send_msg json oc
 
-let res_request_vote msg oc = failwith "succ my zucc"
-
-(* [handle_vote_req msg] handles receiving a vote request message *)
-let handle_vote_req msg oc =
+(* [res_request_vote msg oc] handles receiving a vote request message *)
+let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
     let continue = match !serv_state.votedFor with
                     | None -> true
@@ -149,19 +151,20 @@ let handle_vote_req msg oc =
             "current_term":!serv_state.currentTerm,
             "vote_granted":vote_granted,
           }
-        |} in Lwt_io.write_line oc json; Lwt_io.flush oc;
+        |} in send_msg json oc
     | None -> failwith "kek"
 
-(* [send_rpcs f ips] recursively sends RPCs to every ip in [ips] using the
+(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
  * [req_append_entries msg]
  * [req_request_vote msg] *)
-let rec send_rpcs f ips =
-    match ips with
-    | [] -> ()
-    | ip::t ->
-        let _ = f ip in
-        send_rpcs f t
+let rec send_rpcs f =
+    let lst_o = !output_channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | [] -> print_endline "sent all rpcs!"
+      | h::t -> f h; send_to_ocs t in
+    send_to_ocs lst_o
 
 (* [get_entry_term e_opt] takes in the value of a state's last entry option and
  * returns the last entry's term, or -1 if there was no last entry (aka the log
@@ -200,6 +203,7 @@ let send_heartbeats () =
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
+    print_endline "election started!";
     (* increment term and vote for self *)
     let curr_term = !serv_state.currentTerm in
     serv_state := {
@@ -215,7 +219,8 @@ let rec start_election () =
         last_log_index = !serv_state.commitIndex;
         last_log_term = get_entry_term (!serv_state.lastEntry)
     } in
-    send_rpcs (req_request_vote ballot) neighbors
+    print_endline "sending rpcs...";
+    send_rpcs (req_request_vote ballot)
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
@@ -250,8 +255,8 @@ and act_candidate () =
     (* this will be continuously run to check if the election has been won by
      * this candidate *)
     let rec check_win_election () =
-        print_endline (string_of_int (List.length !serv_state.neighboringIPs));
-        print_endline (string_of_int !vote_counter);
+        (* print_endline (string_of_int (List.length !serv_state.neighboringIPs));
+        print_endline (string_of_int !vote_counter); *)
         (* if majority of votes, proceed to win election *)
         if !vote_counter > ((List.length !serv_state.neighboringIPs) / 2)
             then win_election ()
@@ -340,7 +345,7 @@ let handle_message msg oc =
     match msg_type with
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> handle_vote_req msg oc; ()
+    | "vote_req" -> res_request_vote msg oc; ()
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower}; ()
@@ -366,8 +371,7 @@ let init_server () =
     (* TODO change id of server s*)
     change_heartbeat ();
     init_follower ();
-    (* any more scheduled tasks will run after this *)
-    Async.Scheduler.go ()
+    Async.Scheduler.go (); ()
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -386,6 +390,8 @@ let accept_connection conn =
     Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
     let otherl = !output_channels in
     output_channels := (oc::otherl);
+    let iplistlen = List.length (!serv_state.neighboringIPs) in
+    if (List.length !output_channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -421,6 +427,8 @@ let main_client address portnum =
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !output_channels in
              output_channels := (oc::otherl);
+             let iplistlen = List.length (!serv_state.neighboringIPs) in
+             if (List.length !output_channels)=iplistlen then init_server ();
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
@@ -466,13 +474,12 @@ let startserverest port_num =
 
     Lwt_main.run @@ serve ();;
 
-let startserverest2 port_num =
-    print_endline "ajsdfjasjdfjasjf";
+
+let rec st port_num =
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
+    Lwt_main.run @@ serve ();
+    (* any more scheduled tasks will run after this *)
 
-    init_server ();
-
-    Lwt_main.run @@ serve ();;
