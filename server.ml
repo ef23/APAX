@@ -20,7 +20,6 @@ type state = {
     currentTerm : int;
     votedFor : string option;
     log : (int * entry) list;
-    lastEntry : entry option;
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
@@ -29,6 +28,9 @@ type state = {
     matchIndexList : int list;
     internal_timer : int;
 }
+
+
+
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -46,7 +48,6 @@ let serv_state = ref {
     currentTerm = 0;
     votedFor = None;
     log = [];
-    lastEntry = None;
     commitIndex = 0;
     lastApplied = 0;
     heartbeat = 0;
@@ -56,6 +57,13 @@ let serv_state = ref {
     internal_timer = 0;
 }
 
+
+(* [last_entry ()] is the last entry added to the server's log
+ * The log must be sorted in reverse chronological order *)
+let last_entry () =
+    match !serv_state.log with
+    | [] -> None
+    | (_, e)::_ -> Some e
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -335,34 +343,26 @@ let rec send_rpcs f =
       | h::t -> f h; send_to_ocs t in
     send_to_ocs lst_o
 
-(* [get_entry_term e_opt] takes in the value of a state's last entry option and
- * returns the last entry's term, or -1 if there was no last entry (aka the log
- * is empty) *)
-let get_entry_term e_opt =
-    match e_opt with
-    | Some e -> e.entryTerm
-    | None -> -1
-
-let get_p_log_idx =
-    match (last_entry ()) with
+let get_p_log_idx () =
+    match last_entry () with
     | None -> 0
     | Some e -> e.index
 
-let get_p_log_term =
-    match (last_entry ()) with
+let get_p_log_term () =
+    match last_entry () with
     | None -> 0
-    | Some e -> e.entryTerm)
+    | Some e -> e.entryTerm
 
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
-        "leader_id:" ^ !serv_state.leader_id ^ ","
-        "\"term\":" ^ string_of_int !serv_state.currentTerm ^ ","
-        "\"prev_log_index\": " ^ (string_of_int get_p_log_idx) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int get_p_log_term) ^ "," ^
+        "leader_id:" ^ !serv_state.leader_id ^ "," ^
+        "\"term\":" ^ string_of_int !serv_state.currentTerm ^ "," ^
+        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
         "\"entries\": \"\"," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+        "\"leader_commit\":" ^ string_of_int !serv_state.commitIndex ^
         "}");
     Lwt_io.flush oc;
 (*TODO change heartbeat to an empty RPC*)
@@ -404,7 +404,7 @@ let rec start_election () =
     let ballot = {
         term = !serv_state.currentTerm;
         candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
+        last_log_index = get_p_log_idx ();
         last_log_term = get_p_log_term ();
     } in
     print_endline "sending rpcs...";
@@ -561,8 +561,8 @@ let handle_message msg oc =
             let rpc = {
                 ap_term = !serv_state.currentTerm;
                 leader_id = !serv_state.id;
-                prev_log_index = p_log_idx;
-                prev_log_term = p_log_term;
+                prev_log_index = p_log_idx ();
+                prev_log_term = p_log_term ();
                 entries = [];
                 leader_commit = !serv_state.commitIndex;
             } in
