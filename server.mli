@@ -29,12 +29,12 @@ val change_heartbeat: unit -> unit
 (* [req_append_entries str] sends an appendEntries call to another server
  * [str] is the message we want to send
  *)
-val req_append_entries : append_entries_req -> Lwt_io.output_channel -> unit
+val req_append_entries : append_entries_req -> Lwt_io.output_channel -> unit Lwt.t
 
 (* [res_append_entries str] sends an appendEntries call to another server
  * [str] is the message we want to send
  *)
-val res_append_entries : append_entries_res -> Lwt_io.output_channel -> unit
+val res_append_entries : append_entries_res -> Lwt_io.output_channel -> unit Lwt.t
 
 (* [req_request_vote str] sends an requestVote call
  * [str] is the message we want to send

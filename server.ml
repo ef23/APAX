@@ -57,6 +57,13 @@ let serv_state = ref {
     internal_timer = 0;
 }
 
+
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+let full_addr_str port_num =
+    Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
+
 let read_neighboring_ips port_num =
   let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
   let port_regex = "\:[0-9]*" in
@@ -114,23 +121,48 @@ let send_msg str oc =
     Lwt_io.write_line oc str; Lwt_io.flush oc
 
 (* LOG REPLICATIONS *)
-let req_append_entries msg oc = failwith
+
+let stringify_entry e:string =
+  let json =
+    "{
+      \"value\":" ^ (string_of_int e.value) ^ ",
+      \"entryTerm\":" ^ (string_of_int e.entryTerm) ^ ",
+      \"index\":" ^ (string_of_int e.index) ^
+    "}"
+  in json
+
+let req_append_entries msg oc =
+    let json =
+    (*   "{
+        \"type\": appd_req,
+        \"term\":" ^ (string_of_int msg.term) ^",
+        \"leader_id\":" ^ (msg.leader_id) ^ ",
+        \"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ ",
+        \"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ ",
+        \"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ ",
+        \"leader_commit\":" ^ (string_of_int msg.leader_commit) ^ *)
+      "}"
+    in send_msg json oc
+(*
+
+    failwith
  "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
  listen for responses.
  - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
  - then when majority, incr commit index
 
- "
+ " *)
 let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
-let req_request_vote ballot oc =
-    let json = 
+let req_request_vote (ballot:vote_req) oc =
+    let json =
       "{
         \"type\": vote_req,
         \"term\":" ^ (string_of_int ballot.term) ^",
         \"candidate_id\":" ^ ballot.candidate_id ^ ",
         \"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",
-        \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ 
+        \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^
       "}"
     in send_msg json oc
 
@@ -149,13 +181,14 @@ let res_request_vote msg oc =
         let curr_log_term = log.entryTerm in
         let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
-        let json = 
+        let json =
           "{
             \"current_term\":" ^ (string_of_int !serv_state.currentTerm) ^ ",
             \"vote_granted\":" ^ (string_of_bool vote_granted) ^ ",
           }"
          in send_msg json oc
-    | None -> failwith "kek"
+    | None -> failwith "Impossible"
+
 
 (* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
  * partially applied function [f], which is assumed to be one of the following:
@@ -178,12 +211,11 @@ let get_entry_term e_opt =
     | None -> -1
 
 let rec send_heartbeat oc () =
-    Lwt_io.write_line oc "{\"type\":\"heartbeat\"}"; Lwt_io.flush oc;
-    (*TODO include leader id*)
+    Lwt_io.write_line oc ("{\"type\":\"heartbeat\", leader_id:" ^ !serv_state.leader_id ^ "}"); Lwt_io.flush oc;
+(*TODO change heartbeat to an empty RPC*)
     print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
 
-(*TODO change heartbeat to an empty RPC*)
 let send_heartbeats () =
     let lst_o = !output_channels in
     print_endline " fdsafds";
@@ -374,7 +406,6 @@ let handle_message msg oc =
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-    (* TODO change id of server s*)
     change_heartbeat ();
     init_follower ();
     Async.Scheduler.go (); ()
