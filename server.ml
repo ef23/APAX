@@ -166,12 +166,46 @@ let res_append_entries (ae_res:append_entries_res) oc =
 let json_es entries = failwith "jsonify the entires liest"
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
- * index [pli] with entry term [plt] *)
-let mismatch_log my_log prev_log_index prev_log_term = 
-    failwith "impl"
+ * index [pli] with entry term [plt]; else false *)
+let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term = 
+    (* returns nth entry of the log *)
+    if prev_log_index > (List.length my_log + 1) then true
+    else
+        match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
+        | None -> true
+        | Some (_,e) -> if e.entryTerm = prev_log_term then false else true
 
+(* [process_conflicts entries] goes through the server's log and removes entries
+ * that conflict (same index different term) with those in [entries] *)
+let process_conflicts entries = 
+    (* [does_conflict e1 e2] returns true if e1 has a different term than e2
+     * -requires e1 and e2 to have the same index *)
+    let does_conflict log_e new_e = 
+        if log_e.entryTerm = new_e.entryTerm then false else true in
 
-let process_conflicts entries = failwith "Uaksdfl"
+    (* given a new entry e, go through the log and return a new (shorter) log 
+     * if we find a conflict; otherwise return the original log *)
+    let rec iter_log old_l new_l new_e = 
+        match new_l with
+        | [] -> old_l
+        | (i,log_e)::t -> 
+            if (i = new_e.index && does_conflict log_e new_e) then t 
+            else iter_log old_l t new_e in
+
+    let old_log = !serv_state.log in
+
+    (* [iter_entries el s_log] looks for conflicts for each entry in [el]
+     * and keeps track of the shortest log [short_log] *)
+    let rec iter_entries el short_log =
+        match el with
+        | [] -> short_log
+        | e::t -> let new_log = iter_log old_log old_log e in
+            if (List.length new_log < List.length short_log) then 
+                iter_entries t new_log
+            else iter_entries t short_log in
+
+    let n_log = iter_entries entries old_log in
+    serv_state := {!serv_state with log = n_log}; ()
 
 let append_new_entries entries = failwith "Unasdlkjfadsf"
 
