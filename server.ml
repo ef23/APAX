@@ -20,7 +20,6 @@ type state = {
     currentTerm : int;
     votedFor : string option;
     log : (int * entry) list;
-    lastEntry : entry option;
     commitIndex : int;
     lastApplied : int;
     heartbeat : int;
@@ -30,6 +29,9 @@ type state = {
     internal_timer : int;
     received_heartbeat : bool;
 }
+
+
+
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -47,7 +49,6 @@ let serv_state = ref {
     currentTerm = 0;
     votedFor = None;
     log = [];
-    lastEntry = None;
     commitIndex = 0;
     lastApplied = 0;
     heartbeat = 0;
@@ -58,6 +59,13 @@ let serv_state = ref {
     received_heartbeat = false;
 }
 
+
+(* [last_entry ()] is the last entry added to the server's log
+ * The log must be sorted in reverse chronological order *)
+let last_entry () =
+    match !serv_state.log with
+    | [] -> None
+    | (_, e)::_ -> Some e
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -92,6 +100,8 @@ let read_neighboring_ips port_num =
 let curr_role_thr = ref None
 
 let vote_counter = ref 0
+let response_count = ref 0
+let success_count = ref 0
 
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
@@ -135,7 +145,8 @@ let stringify_entry (e:entry): string =
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
-        "\"type\": appd_req,\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"type\": appd_req," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
         "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
@@ -185,17 +196,68 @@ let json_es (entries:string): entry list =
 
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
- * index [pli] with entry term [plt] *)
-let mismatch_log my_log prev_log_index prev_log_term =
-    failwith "impl"
+ * index [pli] with entry term [plt]; else false *)
+let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
+    (* returns nth entry of the log *)
+    if prev_log_index > (List.length my_log + 1) then true
+    else
+        match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
+        | None -> true
+        | Some (_,e) -> if e.entryTerm = prev_log_term then false else true
 
+(* [process_conflicts entries] goes through the server's log and removes entries
+ * that conflict (same index different term) with those in [entries] *)
+let process_conflicts entries =
+    (* [does_conflict e1 e2] returns true if e1 has a different term than e2
+     * -requires e1 and e2 to have the same index *)
+    let does_conflict log_e new_e =
+        if log_e.entryTerm = new_e.entryTerm then false else true in
 
+    (* given a new entry e, go through the log and return a new (shorter) log
+     * if we find a conflict; otherwise return the original log *)
+    let rec iter_log old_l new_l new_e =
+        match new_l with
+        | [] -> old_l
+        | (i,log_e)::t ->
+            if (i = new_e.index && does_conflict log_e new_e) then t
+            else iter_log old_l t new_e in
 
-let process_conflicts entries = failwith "Uaksdfl"
+    let old_log = !serv_state.log in
 
-let append_new_entries entries = failwith "Unasdlkjfadsf"
+    (* [iter_entries el s_log] looks for conflicts for each entry in [el]
+     * and keeps track of the shortest log [short_log] *)
+    let rec iter_entries el short_log =
+        match el with
+        | [] -> short_log
+        | e::t -> let new_log = iter_log old_log old_log e in
+            if (List.length new_log < List.length short_log) then
+                iter_entries t new_log
+            else iter_entries t short_log in
 
-let last_entry_commit () = failwith "unimplemented"; -1
+    let n_log = iter_entries entries old_log in
+    serv_state := {!serv_state with log = n_log}; ()
+
+let rec append_new_entries (entries : entry list) : unit =
+    let entries = List.rev_append entries [] in
+    let rec append_new (entries: entry list):unit =
+        match entries with
+        | [] -> ()
+        | h::t ->
+            begin
+                if List.exists (fun (_,e) -> e = h) !serv_state.log
+                then append_new t
+                else
+                let old_st_log = !serv_state.log in
+                let new_ind = List.length old_st_log + 1 in
+                let new_entry = {h with index = new_ind} in
+                let new_addition = (new_ind, new_entry) in
+                serv_state := {!serv_state with log = new_addition::old_st_log};
+                append_new t
+            end
+    in
+    append_new entries
+
+let last_entry_idx () = match !serv_state.log with | (i,_)::t -> i | [] -> 0
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
@@ -216,10 +278,29 @@ let handle_ae_req msg oc =
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
     if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with commitIndex = min leader_commit (last_entry_commit ())}; (* 5 *)
+    then serv_state := {!serv_state with commitIndex = min leader_commit (last_entry_idx ())}; (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
+
+let handle_ae_res msg oc =
+    let current_term = msg |> member "current_term" |> to_int in
+    let success = msg |> member "success" |> to_bool in
+
+    (* TODO wtf do we do with current_term??? *)
+
+    let s_count = (if success then !success_count + 1 else !success_count) in
+    let t_count = !response_count + 1 in
+    if s_count > ((List.length !serv_state.neighboringIPs) / 2) then
+        ((* reset counters *)
+        response_count := 0; success_count := 0;
+        (* TODO commit to log *)
+        ())
+    else if t_count = List.length !serv_state.neighboringIPs then
+        ((* reset reset counters *)
+        response_count := 0; success_count := 0;
+        ()) (* TODO notify client of failure *)
+    else () (* do nothing basically *)
 
 
 let req_request_vote ballot oc =
@@ -272,8 +353,28 @@ let get_entry_term e_opt =
     | Some e -> e.entryTerm
     | None -> -1
 
+let get_p_log_idx () =
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.index
+
+let get_p_log_term () =
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.entryTerm
+
 let rec send_heartbeat oc () =
-    Lwt_io.write_line oc ("{\"type\":\"heartbeat\", leader_id:" ^ !serv_state.leader_id ^ "}"); Lwt_io.flush oc;
+    Lwt_io.write_line oc (
+        "{" ^
+        "\"type\":\"heartbeat\"," ^
+        "leader_id:" ^ !serv_state.leader_id ^ "," ^
+        "\"term\":" ^ string_of_int !serv_state.currentTerm ^ "," ^
+        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+        "\"entries\": \"\"," ^
+        "\"leader_commit\":" ^ string_of_int !serv_state.commitIndex ^
+        "}");
+    Lwt_io.flush oc;
 (*TODO change heartbeat to an empty RPC*)
     print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
@@ -314,7 +415,7 @@ let rec start_election () =
         term = !serv_state.currentTerm;
         candidate_id = !serv_state.id;
         last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
+        last_log_term = get_entry_term (last_entry ())
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot)
@@ -460,11 +561,8 @@ let handle_message msg oc =
         else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
-            let p_log_idx =
-                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.index) in
-            let p_log_term =
-                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.entryTerm) in
-
+            let p_log_idx = get_p_log_idx in
+            let p_log_term = get_p_log_term in
             let new_entry = {
                     value = msg |> member "value" |> to_int;
                     entryTerm = msg |> member "entryTerm" |> to_int;
@@ -474,8 +572,8 @@ let handle_message msg oc =
             let rpc = {
                 ap_term = !serv_state.currentTerm;
                 leader_id = !serv_state.id;
-                prev_log_index = p_log_idx;
-                prev_log_term = p_log_term;
+                prev_log_index = p_log_idx ();
+                prev_log_term = p_log_term ();
                 entries = [];
                 leader_commit = !serv_state.commitIndex;
             } in
