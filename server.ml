@@ -166,15 +166,15 @@ let res_append_entries (ae_res:append_entries_res) oc =
 
       "}"
     in send_msg json oc
-(*janice*)
+(* [json_es entries] should return a list of entries parsed from the string [entries]*)
 let json_es entries = failwith "jsonify the entires liest"
 
 (**)
 let mismatch_log my_log prev_log_index prev_log_term = failwith "dakjsfakjd"
 
-let process_conflicts () = failwith "Uaksdfl"
+let process_conflicts entries = failwith "Uaksdfl"
 
-let append_new_entries () = failwith "Unasdlkjfadsf"
+let append_new_entries entries = failwith "Unasdlkjfadsf"
 
 let last_entry_commit = failwith "asdklfj"
 
@@ -183,21 +183,21 @@ let handle_ae_req msg oc =
     let leader_id = msg |> member "leader_id" |> to_string in
     let prev_log_index = msg |> member "prev_log_index" |> to_int in
     let prev_log_term = msg |> member "prev_log_term" |> to_int in
-    let entries = msg |> member "prev_log_term" |> to_int |> json_es in
+    let entries = msg |> member "entries" |> to_string |> json_es in
     let leader_commit = msg |> member "leader_commit" |> to_int in
     let success_bool =
-        if ap_term < !serv_state.currentTerm then false
-        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false
+        if ap_term < !serv_state.currentTerm then false (* 1 *)
+        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false (* 2 *)
         else true
     in
     let ae_res = {
         success = success_bool;
         current_term = !serv_state.currentTerm;
     } in
-    process_conflicts ();
-    append_new_entries ();
+    process_conflicts entries; (* 3 *)
+    append_new_entries entries; (* 4 *)
     if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit};
+    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit}; (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
