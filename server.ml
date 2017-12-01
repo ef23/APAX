@@ -154,7 +154,41 @@ let req_append_entries (msg : append_entries_req) oc =
 
  " *)
 
-let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
+let res_append_entries ae_res oc = failwith "Unimplemented"
+
+let json_es entries = failwith "jsonify the entires liest"
+
+let mismatch_log my_log prev_log_index prev_log_term = failwith "dakjsfakjd"
+
+let process_conflicts () = failwith "Uaksdfl"
+
+let append_new_entries () = failwith "Unasdlkjfadsf"
+
+let last_entry_commit = failwith "asdklfj"
+
+let handle_ae_req msg oc =
+    let ap_term = msg |> member "ap_term" |> to_int in
+    let leader_id = msg |> member "leader_id" |> to_string in
+    let prev_log_index = msg |> member "prev_log_index" |> to_int in
+    let prev_log_term = msg |> member "prev_log_term" |> to_int in
+    let entries = msg |> member "prev_log_term" |> to_int |> json_es in
+    let leader_commit = msg |> member "leader_commit" |> to_int in
+    let success_bool =
+        if ap_term < !serv_state.currentTerm then false
+        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false
+        else true
+    in
+    let ae_res = {
+        success = success_bool;
+        current_term = !serv_state.currentTerm;
+    } in
+    process_conflicts ();
+    append_new_entries ();
+    if leader_commit > !serv_state.commitIndex
+    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit};
+    res_append_entries ae_res oc
+
+    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
 
 let req_request_vote ballot oc =
@@ -383,7 +417,8 @@ let handle_message msg oc =
     | "vote_req" -> begin print_endline "this is vote req"; res_request_vote msg oc; () end
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower}; () end
+                    then serv_state := {!serv_state with role = Follower};
+                    res_append_entries msg oc; () end
     | "appd_res" -> ()
     | "client" ->
         (* TODO redirect client to Leader *)
