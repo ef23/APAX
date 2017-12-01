@@ -136,7 +136,8 @@ let stringify_entry (e:entry): string =
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
-        "\"type\": appd_req,\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"type\": appd_req," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
         "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
@@ -247,7 +248,7 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
-let last_entry_idx () = match !serv_state.log with | (i,_)::t -> i | [] -> 0 
+let last_entry_idx () = match !serv_state.log with | (i,_)::t -> i | [] -> 0
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
@@ -273,7 +274,7 @@ let handle_ae_req msg oc =
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
-let handle_ae_res msg oc = 
+let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
 
@@ -342,8 +343,28 @@ let get_entry_term e_opt =
     | Some e -> e.entryTerm
     | None -> -1
 
+let get_p_log_idx =
+    match !serv_state.lastEntry with
+    | None -> 0
+    | Some e -> e.index
+
+let get_p_log_term =
+    match !serv_state.lastEntry with
+    | None -> 0
+    | Some e -> e.entryTerm)
+
 let rec send_heartbeat oc () =
-    Lwt_io.write_line oc ("{\"type\":\"heartbeat\", leader_id:" ^ !serv_state.leader_id ^ "}"); Lwt_io.flush oc;
+    Lwt_io.write_line oc (
+        "{" ^
+        "\"type\":\"heartbeat\"," ^
+        "leader_id:" ^ !serv_state.leader_id ^ ","
+        "\"term\":" ^ string_of_int !serv_state.currentTerm ^ ","
+        "\"prev_log_index\": " ^ (string_of_int get_p_log_idx) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int get_p_log_term) ^ "," ^
+        "\"entries\": \"\"," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+        "}");
+    Lwt_io.flush oc;
 (*TODO change heartbeat to an empty RPC*)
     print_endline "hello";
     Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
@@ -529,11 +550,8 @@ let handle_message msg oc =
         else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
-            let p_log_idx =
-                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.index) in
-            let p_log_term =
-                (match !serv_state.lastEntry with | None -> 0 | Some e -> e.entryTerm) in
-
+            let p_log_idx = get_p_log_idx in
+            let p_log_term = get_p_log_term in
             let new_entry = {
                     value = msg |> member "value" |> to_int;
                     entryTerm = msg |> member "entryTerm" |> to_int;
