@@ -344,12 +344,12 @@ let get_entry_term e_opt =
     | None -> -1
 
 let get_p_log_idx =
-    match !serv_state.lastEntry with
+    match (last_entry ()) with
     | None -> 0
     | Some e -> e.index
 
 let get_p_log_term =
-    match !serv_state.lastEntry with
+    match (last_entry ()) with
     | None -> 0
     | Some e -> e.entryTerm)
 
@@ -405,7 +405,7 @@ let rec start_election () =
         term = !serv_state.currentTerm;
         candidate_id = !serv_state.id;
         last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (!serv_state.lastEntry)
+        last_log_term = get_p_log_term ();
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot)
