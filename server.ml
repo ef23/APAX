@@ -176,7 +176,7 @@ let process_conflicts entries = failwith "Uaksdfl"
 
 let append_new_entries entries = failwith "Unasdlkjfadsf"
 
-let last_entry_commit = failwith "asdklfj"
+let last_entry_commit () = failwith "unimplemented"; -1
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
@@ -197,7 +197,7 @@ let handle_ae_req msg oc =
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
     if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with commitIndex = min leader_commit last_entry_commit}; (* 5 *)
+    then serv_state := {!serv_state with commitIndex = min leader_commit (last_entry_commit ())}; (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
@@ -428,7 +428,7 @@ let handle_message msg oc =
     match msg_type with
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> begin print_endline "this is vote req"; res_request_vote msg oc; () end
+    | "vote_req" -> begin print_endline "this is vote req"; print_endline (string_of_bool (!serv_state.role = Follower)); res_request_vote msg oc; () end
     | "vote_res" -> handle_vote_res msg oc; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower};
@@ -563,29 +563,9 @@ let establish_connections_to_others () =
 
 let create_server sock =
     let rec serve () =
+        print_endline "i am waiting for connections";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
-let doboth () =
-    read_neighboring_ips 9003 |> establish_connections_to_others |>
-    send_heartbeats ;;
-
-let startserver port_num =
-    print_endline "ajsdfjasjdfjasjf";
-    read_neighboring_ips port_num;
-    let sock = create_socket port_num () in
-    let serve = create_server sock in
-
-    Lwt_main.run @@ serve ();;
-
-let startserverest port_num =
-    print_endline "ajsdfjasjdfjasjf";
-    read_neighboring_ips port_num;
-    establish_connections_to_others ();
-    let sock = create_socket port_num () in
-    let serve = create_server sock in
-
-    Lwt_main.run @@ serve ();;
 
 let rec st port_num =
     serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
