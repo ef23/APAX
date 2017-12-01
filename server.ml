@@ -133,7 +133,7 @@ let stringify_entry e:string =
 
 let req_append_entries msg oc =
     let json =
-    (*   "{
+       "{
         \"type\": appd_req,
         \"term\":" ^ (string_of_int msg.term) ^",
         \"leader_id\":" ^ (msg.leader_id) ^ ",
@@ -141,7 +141,7 @@ let req_append_entries msg oc =
         \"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ ",
         \"entries\":" ^
         (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ ",
-        \"leader_commit\":" ^ (string_of_int msg.leader_commit) ^ *)
+        \"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
 (*
@@ -155,15 +155,10 @@ let req_append_entries msg oc =
  " *)
 let res_append_entries msg oc = failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf"
 
-let req_request_vote (ballot:vote_req) oc =
+
+let req_request_vote ballot oc =
     let json =
-      "{
-        \"type\": vote_req,
-        \"term\":" ^ (string_of_int ballot.term) ^",
-        \"candidate_id\":" ^ ballot.candidate_id ^ ",
-        \"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",
-        \"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^
-      "}"
+      "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
     in send_msg json oc
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
@@ -383,10 +378,10 @@ let handle_message msg oc =
     match msg_type with
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> res_request_vote msg oc; ()
+    | "vote_req" -> begin print_endline "this is vote req"; res_request_vote msg oc; () end
     | "vote_res" -> handle_vote_res msg oc; ()
-    | "appd_req" -> if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower}; ()
+    | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
+                    then serv_state := {!serv_state with role = Follower}; () end
     | "appd_res" -> ()
     | "client" -> failwith "what the client wants to send -> helper function that will check leader ip and either retrun leader ip to client or do appropriate if it is the leader"
     | _ -> ()
@@ -513,7 +508,7 @@ let startserverest port_num =
 
 
 let rec st port_num =
-    serv_state := {!serv_state with id=(!serv_state.id ^ ":" ^ (string_of_int port_num))};
+    serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     let sock = create_socket port_num () in
