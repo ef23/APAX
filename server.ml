@@ -30,8 +30,6 @@ type state = {
     received_heartbeat : bool;
 }
 
-let _ = Random.self_init ()
-
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
     let lower = 150 in
@@ -67,6 +65,17 @@ let last_entry () =
     match !serv_state.log with
     | [] -> None
     | (_, e)::_ -> Some e
+
+let get_p_log_idx () =
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.index
+
+let get_p_log_term () =
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.entryTerm
+
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -258,8 +267,6 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
-let last_entry_idx () = match !serv_state.log with | (i,_)::t -> i | [] -> 0
-
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
     let leader_id = msg |> member "leader_id" |> to_string in
@@ -278,8 +285,9 @@ let handle_ae_req msg oc =
     } in
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
-    if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with commitIndex = min leader_commit (last_entry_idx ())}; (* 5 *)
+    if leader_commit > !serv_state.commitIndex then
+        (let new_commit = min leader_commit (get_p_log_idx ()) in
+        serv_state := {!serv_state with commitIndex = new_commit}); (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
@@ -346,24 +354,6 @@ let rec send_rpcs f =
       | (ic, oc)::t -> f oc; send_to_ocs t in
     send_to_ocs lst_o
 
-(* [get_entry_term e_opt] takes in the value of a state's last entry option and
- * returns the last entry's term, or -1 if there was no last entry (aka the log
- * is empty) *)
-let get_entry_term e_opt =
-    match e_opt with
-    | Some e -> e.entryTerm
-    | None -> -1
-
-let get_p_log_idx () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.index
-
-let get_p_log_term () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.entryTerm
-
 let rec send_heartbeat oc () =
     Lwt_io.write_line oc (
         "{" ^
@@ -415,8 +405,8 @@ let rec start_election () =
     let ballot = {
         term = !serv_state.currentTerm;
         candidate_id = !serv_state.id;
-        last_log_index = !serv_state.commitIndex;
-        last_log_term = get_entry_term (last_entry ())
+        last_log_index = get_p_log_idx ();
+        last_log_term = get_p_log_term ();
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot);
@@ -531,7 +521,14 @@ let handle_vote_res msg hi =
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
 let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
-    serv_state := {!serv_state with leader_id = l_id; internal_timer = !serv_state.heartbeat}
+    let leader_commit = msg |> member "leader_commit" |> to_int in
+
+    if leader_commit > !serv_state.commitIndex
+    then serv_state := {!serv_state with leader_id = l_id;
+        internal_timer = !serv_state.heartbeat;
+        commitIndex = min leader_commit (get_p_log_idx ())}
+    else serv_state := {!serv_state with leader_id = l_id;
+        internal_timer = !serv_state.heartbeat}
 
 let handle_client_as_leader msg =
     failwith "
