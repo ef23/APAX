@@ -30,12 +30,11 @@ type state = {
     internal_timer : int;
 }
 
-(* the lower range of the election timeout, in this case 150-300ms*)
-let generate_heartbeat =
-    let lower = 1500 in
-    let range = 1500 in
+(* the lower range of the elec tion timeout, in th is case 150-300ms*)
+let generate_heartbeat () =
+    let lower = 150 in
+    let range = 150 in
     (Random.int range) + lower
-
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -93,7 +92,7 @@ let curr_role_thr = ref None
 let vote_counter = ref 0
 
 let change_heartbeat () =
-    let new_heartbeat = generate_heartbeat in
+    let new_heartbeat = generate_heartbeat () in
     serv_state := {!serv_state with
             heartbeat = new_heartbeat;
             internal_timer = new_heartbeat;
@@ -574,6 +573,7 @@ let startserverest port_num =
 
 
 let rec st port_num =
+    Random.self_init ();
     serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
