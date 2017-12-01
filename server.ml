@@ -441,7 +441,9 @@ and act_candidate () =
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
          print_endline (string_of_bool (!serv_state.role = Candidate ));
-        if !serv_state.role = Candidate then act_candidate () in
+        if !serv_state.role = Candidate
+        then Async.upon (Async.after (Core.Time.Span.create ~ms:1 ())) (act_candidate)
+         in
 
     (* this will be continuously run to check if the election has been won by
      * this candidate *)
@@ -592,10 +594,13 @@ let handle_message msg oc =
 
 let rec handle_connection ic oc () =
     print_endline "ur stuck with me";
+    let can_cancel = fst (Lwt.task ()) in
+    if false=true then Lwt.cancel can_cancel else
     Lwt.bind (Lwt_io.read_line_opt ic)
-    (fun msg ->
+    (fun (msg) ->
         match msg with
-        | Some m ->
+        | (Some m) ->
+            print_endline "wow!";
             handle_message m oc;
             (handle_connection ic oc) ();
         | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
@@ -606,13 +611,12 @@ let rec handle_connection ic oc () =
 let init_server () =
     let rec listen_connection orig_lst lst () =
         match lst with
-        | [] -> Async.upon (Async.after (Core.Time.Span.create ~ms:50 ())) (listen_connection !channels !channels)
-        | (ic, oc)::t -> begin handle_connection ic oc ();
+        | [] -> ()
+        | (ic, oc)::t -> begin Lwt.async (handle_connection ic oc);
                                listen_connection orig_lst t ()
                          end in
     change_heartbeat ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
-    Async.upon (Async.after (Core.Time.Span.create ~ms:50 ()))(listen_connection !channels !channels);
     Async.Scheduler.go (); ()
 
 let accept_connection conn =
