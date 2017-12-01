@@ -486,13 +486,12 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-  (*   print_endline "act follower";
-    print_endline (string_of_int !serv_state.internal_timer); *)
+    print_endline "act follower";
     (* check if the timeout has expired, and that it has voted for no one *)
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin (serv_state := {!serv_state with role=Candidate}; init_candidate ());  end
     (* if condition satisfied, continue being follower, otherwise start elec *)
-    else begin serv_state := {!serv_state with received_heartbeat = false}; (Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ()))
+    else begin serv_state := {!serv_state with received_heartbeat = false}; (Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ()))
         (act_follower)); end
 
 and init_follower () =
@@ -534,13 +533,11 @@ let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
     serv_state := {!serv_state with leader_id = l_id; internal_timer = !serv_state.heartbeat}
 
-
 let handle_client_as_leader msg =
     failwith "
     1. parse the value field, leader append to own log -- see mli
      (leader's current term & list.length for index)
     2. call req append entries"
-
 
 let handle_message msg oc =
     print_endline "i am in handle message";
@@ -597,13 +594,14 @@ let handle_message msg oc =
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
 let rec handle_connection ic oc () =
+    print_endline "ur stuck with me";
     Lwt.bind (Lwt_io.read_line_opt ic)
     (fun msg ->
         match msg with
         | Some m ->
             handle_message m oc;
             (handle_connection ic oc) ();
-        | None -> Lwt_log.info "Connection closed" >>= return)
+        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
@@ -611,13 +609,13 @@ let rec handle_connection ic oc () =
 let init_server () =
     let rec listen_connection orig_lst lst () =
         match lst with
-        | [] -> listen_connection orig_lst orig_lst ()
+        | [] -> Async.upon (Async.after (Core.Time.Span.create ~ms:50 ())) (listen_connection !channels !channels)
         | (ic, oc)::t -> begin handle_connection ic oc ();
                                listen_connection orig_lst t ()
                          end in
     change_heartbeat ();
-    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (listen_connection !channels !channels);
-    Thread.create (init_follower);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
+    Async.upon (Async.after (Core.Time.Span.create ~ms:50 ()))(listen_connection !channels !channels);
     Async.Scheduler.go (); ()
 
 let accept_connection conn =
@@ -667,7 +665,7 @@ let main_client address portnum =
         let otherl = !channels in
              channels := ((ic, oc)::otherl);
              let iplistlen = List.length (!serv_state.neighboringIPs) in
-             if (List.length !output_channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
+             if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
