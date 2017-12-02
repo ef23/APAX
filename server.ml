@@ -593,10 +593,10 @@ let handle_message msg oc =
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
 let rec handle_connection ic oc () =
-    print_endline "ur stuck with me";
+    (*print_endline "ur stuck with me";
     let can_cancel = fst (Lwt.task ()) in
-    if false=true then Lwt.cancel can_cancel else
-    Lwt.bind (Lwt_io.read_line_opt ic)
+    if false=true then Lwt.cancel can_cancel else*)
+    Async.Deferred.bind (Lwt_io.read_line_opt ic)
     (fun (msg) ->
         match msg with
         | (Some m) ->
@@ -616,6 +616,7 @@ let init_server () =
                                listen_connection orig_lst t ()
                          end in
     change_heartbeat ();
+    listen_connection !channels !channels ();
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
     Async.Scheduler.go (); ()
 
