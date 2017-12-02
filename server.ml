@@ -594,8 +594,6 @@ let handle_message msg oc =
 
 let rec handle_connection ic oc () =
     print_endline "ur stuck with me";
-    let can_cancel = fst (Lwt.task ()) in
-    if false=true then Lwt.cancel can_cancel else
     Lwt.bind (Lwt_io.read_line_opt ic)
     (fun (msg) ->
         match msg with
@@ -609,13 +607,14 @@ let rec handle_connection ic oc () =
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-    let rec listen_connection orig_lst lst () =
+    let rec listen_connection lst =
         match lst with
         | [] -> ()
-        | (ic, oc)::t -> begin Lwt.async (handle_connection ic oc);
-                               listen_connection orig_lst t ()
-                         end in
+        | (ic, oc)::t ->
+            begin Lwt.async (handle_connection ic oc); listen_connection t
+            end in
     change_heartbeat ();
+    listen_connection !channels;
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
     Async.Scheduler.go (); ()
 
