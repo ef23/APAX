@@ -599,16 +599,16 @@ let rec handle_connection ic oc () =
     (*print_endline "ur stuck with me";
     let can_cancel = fst (Lwt.task ()) in
     if false=true then Lwt.cancel can_cancel else*)
-    print_endline "ur stuck with me";
-    Async.Deferred.bind (Async.Deferred.return (Lwt_io.read_line_opt ic))
-    (fun msg -> handle_connection ic oc ())
-   (* (fun (msg) ->
-        match msg with
+    Async.Deferred.bind (Async.Deferred.return (
+        let%lwt str = (Lwt_io.read_line_opt ic) in
+        while str = None do print_endline "Kek" done;
+        match str with
         | (Some m) ->
             print_endline "wow!";
             handle_message m oc;
-            (handle_connection ic oc) ();
-        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)*)
+            Lwt_log.info "fdsa" >>= return
+        | None -> begin Lwt_log.info "fdsa" >>= return end))
+    (fun _ -> (handle_connection ic oc) ())
 
 
 
