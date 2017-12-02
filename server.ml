@@ -592,31 +592,38 @@ let handle_message msg oc =
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
+
 let rec handle_connection ic oc () =
+
+
     (*print_endline "ur stuck with me";
     let can_cancel = fst (Lwt.task ()) in
     if false=true then Lwt.cancel can_cancel else*)
-    Async.Deferred.bind (Lwt_io.read_line_opt ic)
-    (fun (msg) ->
+    print_endline "ur stuck with me";
+    Async.Deferred.bind (Async.Deferred.return (Lwt_io.read_line_opt ic))
+    (fun msg -> handle_connection ic oc ())
+   (* (fun (msg) ->
         match msg with
         | (Some m) ->
             print_endline "wow!";
             handle_message m oc;
             (handle_connection ic oc) ();
-        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
+        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)*)
+
+
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-    let rec listen_connection orig_lst lst () =
+    let rec listen_connection lst =
         match lst with
         | [] -> ()
-        | (ic, oc)::t -> begin Lwt.async (handle_connection ic oc);
-                               listen_connection orig_lst t ()
-                         end in
+        | (ic, oc)::t ->
+            begin (handle_connection ic oc); listen_connection t
+            end in
     change_heartbeat ();
-    listen_connection !channels !channels ();
+    listen_connection !channels;
     Async.upon (Async.after (Core.Time.Span.create ~ms:0 ())) (init_follower);
     Async.Scheduler.go (); ()
 
@@ -625,7 +632,7 @@ let accept_connection conn =
     let fd, _ = conn in
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
-    Lwt.on_failure (handle_connection ic oc ()) (fun e -> Lwt_log.ign_error (Printexc.to_string e));
+    (*Lwt.on_failure *)(handle_connection ic oc ());(* (fun e -> Lwt_log.ign_error (Printexc.to_string e));*)
     let otherl = !channels in
     channels := ((ic, oc)::otherl);
     let iplistlen = List.length (!serv_state.neighboringIPs) in
