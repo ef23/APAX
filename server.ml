@@ -454,7 +454,7 @@ and act_candidate () =
         if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
         else
-            check_win_election () in
+            Async.upon (Async.after (Core.Time.Span.create ~ms:1 ())) (check_win_election) in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
