@@ -31,8 +31,8 @@ type state = {
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 0.150 in
-    let range = 0.150 in
+    let lower = 1.50 in
+    let range = 4.00 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
     timer
@@ -128,6 +128,8 @@ let backlog = 10
 
 let () = Lwt_log.add_rule "*" Lwt_log.Info
 
+let hb_interval = (Lwt_unix.sleep 1.)
+
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
@@ -142,6 +144,40 @@ let stringify_entry (e:entry): string =
       "\"index\":" ^ (string_of_int e.index) ^
     "}"
   in json
+
+let req_append_entries (msg : append_entries_req) oc =
+    let json =
+       "{" ^
+        "\"type\": \"appd_req\"," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+(*
+
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ " *)
+
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{" ^
+        "\"type\":" ^ "\"appd_res\"" ^ "," ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+      "}"
+    in send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
@@ -268,14 +304,14 @@ let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
     let continue = match !serv_state.votedFor with
                     | None -> true
-                    | Some id -> id=candidate_id in
+                    | Some id -> print_endline id; print_endline candidate_id; id=candidate_id in
     let otherTerm = msg |> member "term" |> to_int in
     let last_log_term = msg |> member "last_log_term" |> to_int in
     let last_log_index = msg |> member "last_log_index" |> to_int in
     let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
     if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)};
     let json =
-          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match !serv_state.lastEntry with
     | Some log ->
@@ -312,9 +348,7 @@ let rec send_heartbeat oc () =
         "\"leader_commit\":" ^ string_of_int !serv_state.commitIndex ^
         "}");
     Lwt_io.flush oc;
-(*TODO change heartbeat to an empty RPC*)
-    print_endline "hello";
-    Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc) (*TODO test with not hardcoded values for heartbeat*)
+    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
 
 let send_heartbeats () =
     let lst_o = !channels in
@@ -325,7 +359,7 @@ let send_heartbeats () =
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
-          Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (send_heartbeat oc_in)
+          Lwt.bind hb_interval (fun () -> send_heartbeat oc_in ())
           in
           ignore (Thread.create start_timer oc); send_to_ocs t;
         end
@@ -339,10 +373,8 @@ let send_heartbeats () =
  * act functions for roles *)
 let act_all () =
     let la = !serv_state.lastApplied in
-    if !serv_state.commitIndex > la then 
+    if !serv_state.commitIndex > la then
     (serv_state := {!serv_state with lastApplied = la + 1; };); ()
-
-let hb_timer = (Lwt_unix.sleep !serv_state.heartbeat)
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
@@ -365,7 +397,6 @@ let rec start_election () =
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot);
-    print_endline "sfjadsljjgdaksgjjdkasfjkdsalk";
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
@@ -413,26 +444,20 @@ and act_candidate () =
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
         print_endline (string_of_bool (!serv_state.role = Candidate ));
-        if !serv_state.role = Candidate then act_candidate ()
+        if !serv_state.role = Candidate
+        then begin
+                serv_state := {!serv_state with votedFor = None};
+                Lwt.bind hb_interval (fun () -> act_candidate ())
+            end
         else Lwt.return () in
-
-    (* this will be continuously run to check if the election has been won by
-     * this candidate *)
-    let rec check_win_election () =
-        (* print_endline (string_of_int (List.length !serv_state.neighboringIPs));
-        print_endline (string_of_int !vote_counter); *)
-        (* if majority of votes, proceed to win election *)
-        if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
-            then win_election ()
-        else check_win_election () in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_win_election ());
-    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
+    if (List.length !serv_state.neighboringIPs)=1 then win_election ();
+    Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -447,9 +472,13 @@ and init_candidate () =
 and act_follower () =
     print_endline "act follower";
     serv_state := {!serv_state with role = Follower};
+
     act_all ();
-    (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
+    print_endline "hearbteat for";
+    print_endline (string_of_bool !serv_state.received_heartbeat);
+    print_endline "voted for";
+    print_endline (string_of_bool (!serv_state.votedFor = None));
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin
             serv_state := {!serv_state with role=Candidate};
@@ -458,20 +487,21 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state := {!serv_state with received_heartbeat = false};
-            Lwt.bind hb_timer (fun () -> act_follower ())
+            Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> act_follower ())
         end
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.bind hb_timer (fun () -> (act_follower ()));
+    Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
 and win_election () =
+    print_endline "ayyyy";
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
-    Lwt.return (init_leader ())
+    init_leader ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
@@ -544,19 +574,23 @@ let handle_ae_res msg oc =
         ()) (* TODO notify client of failure *)
     else () (* do nothing basically *)
 
-let handle_vote_req msg oc = 
-    print_endline "this is vote req"; 
+let handle_vote_req msg oc =
+    print_endline "this is vote req";
     print_endline (string_of_bool (!serv_state.role = Follower));
     let t = msg |> member "term" |> to_int in
-    handle_precheck t;
+    (* handle_precheck t; *)
     res_request_vote msg oc; ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
-let handle_vote_res msg hi =
+
+let handle_vote_res msg =
+    print_endline "handling vote res!";
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
-    handle_precheck currTerm;
-    if voted then vote_counter := !vote_counter + 1
+    (* handle_precheck currTerm; *)
+    if voted then vote_counter := !vote_counter + 1;
+    if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
+            then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
 let process_heartbeat msg =
@@ -566,7 +600,7 @@ let process_heartbeat msg =
     if leader_commit > !serv_state.commitIndex
     then serv_state := {!serv_state with leader_id = l_id;
         commitIndex = min leader_commit (get_p_log_idx ())}
-    else serv_state := {!serv_state with leader_id = l_id;}
+    else serv_state := {!serv_state with leader_id = l_id; votedFor = None}
 
 let handle_client_as_leader msg =
     failwith "
@@ -575,7 +609,7 @@ let handle_client_as_leader msg =
     2. call req append entries"
 
 let handle_message msg oc =
-    print_endline "i am in handle message";
+    print_endline ("here:"^msg);
     serv_state := {!serv_state with received_heartbeat = true};
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
@@ -583,7 +617,7 @@ let handle_message msg oc =
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
-    | "vote_res" -> handle_vote_res msg oc; ()
+    | "vote_res" -> handle_vote_res msg; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower};
                     handle_ae_req msg oc; () end
@@ -630,7 +664,6 @@ let handle_message msg oc =
 
 
 let rec handle_connection ic oc () =
-    print_endline "ur stuck with me";
     Lwt_io.read_line_opt ic >>=
     (fun (msg) ->
         match msg with
@@ -638,7 +671,7 @@ let rec handle_connection ic oc () =
             print_endline "wow!";
             handle_message m oc;
             (handle_connection ic oc) ();
-        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
+        | None -> begin Lwt_log.info "Connection closed." >>= return end)
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
@@ -650,7 +683,7 @@ let init_server () =
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
         (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
     print_endline "after list";
-    Lwt.async (init_follower);
+    init_follower ();
     print_endline "rigth before"
 
 let accept_connection conn =
@@ -678,7 +711,7 @@ let rec query_server ic oc =
     in Printf.printf "Response : %s\n\n" r;
     flush oc;
     if r = "END" then (Unix.shutdown_connection ic; raise Exit);
-    (*Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ())) (fun _ -> (query_server ic oc));*)
+
   with
     | Exit -> exit 0
     | exn -> Unix.shutdown_connection ic ; raise exn
