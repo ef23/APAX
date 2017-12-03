@@ -264,7 +264,7 @@ let rec append_new_entries (entries : entry list) : unit =
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
-        "\"type\": appd_req," ^
+        "\"type\": \"appd_req\"," ^
         "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
         "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
