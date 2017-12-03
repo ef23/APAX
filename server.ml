@@ -602,8 +602,6 @@ let rec handle_connection ic oc () =
             (handle_connection ic oc) ();
         | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
 
-
-
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
