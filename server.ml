@@ -147,7 +147,7 @@ let stringify_entry (e:entry): string =
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
-        "\"type\": appd_req," ^
+        "\"type\": \"appd_req\"," ^
         "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
         "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
@@ -172,6 +172,7 @@ let req_append_entries (msg : append_entries_req) oc =
 let res_append_entries (ae_res:append_entries_res) oc =
     let json =
       "{" ^
+        "\"type\":" ^ "\"appd_res\"" ^ "," ^
         "\"success\":" ^ string_of_bool ae_res.success ^"," ^
         "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
       "}"
@@ -321,7 +322,7 @@ let res_request_vote msg oc =
     let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
     if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)};
     let json =
-          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match !serv_state.lastEntry with
     | Some log ->
@@ -506,9 +507,11 @@ and terminate_election () =
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg hi =
+    print_endline("handling vote res");
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
-    if voted then vote_counter := !vote_counter + 1
+    if voted then vote_counter := !vote_counter + 1;
+    print_endline (string_of_int !vote_counter)
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
 let process_heartbeat msg =
@@ -518,7 +521,7 @@ let process_heartbeat msg =
     if leader_commit > !serv_state.commitIndex
     then serv_state := {!serv_state with leader_id = l_id;
         commitIndex = min leader_commit (get_p_log_idx ())}
-    else serv_state := {!serv_state with leader_id = l_id;}
+    else serv_state := {!serv_state with leader_id = l_id; votedFor = None}
 
 let handle_client_as_leader msg =
     failwith "
@@ -602,7 +605,7 @@ let init_server () =
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
         (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
     print_endline "after list";
-    Lwt.async (init_follower);
+    init_follower ();
     print_endline "rigth before"
 
 let accept_connection conn =
