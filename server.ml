@@ -148,7 +148,7 @@ let stringify_entry (e:entry): string =
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
-        "\"type\": appd_req," ^
+        "\"type\": \"appd_req\"," ^
         "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
         "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
@@ -173,7 +173,7 @@ let req_append_entries (msg : append_entries_req) oc =
 let res_append_entries (ae_res:append_entries_res) oc =
     let json =
       "{" ^
-        "\"type\": \"appd_res\"" ^
+        "\"type\":" ^ "\"appd_res\"" ^ "," ^
         "\"success\":" ^ string_of_bool ae_res.success ^"," ^
         "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
       "}"
@@ -311,7 +311,7 @@ let res_request_vote msg oc =
     let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
     if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)};
     let json =
-          "{\"type\": \"vote_res\"" ^ ",\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match !serv_state.lastEntry with
     | Some log ->
@@ -397,7 +397,6 @@ let rec start_election () =
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot);
-    print_endline "sfjadsljjgdaksgjjdkasfjkdsalk";
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
@@ -457,8 +456,11 @@ and init_candidate () =
  *)
 and act_follower () =
     act_all ();
-    (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
+    print_endline "hearbteat for";
+    print_endline (string_of_bool !serv_state.received_heartbeat);
+    print_endline "voted for";
+    print_endline (string_of_bool (!serv_state.votedFor = None));
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin
             serv_state := {!serv_state with role=Candidate};
@@ -557,8 +559,9 @@ let handle_vote_req msg oc =
     res_request_vote msg oc; ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
+
 let handle_vote_res msg =
-    print_endline "here!";
+    print_endline "handling vote res!";
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     (* handle_precheck currTerm; *)
@@ -574,7 +577,7 @@ let process_heartbeat msg =
     if leader_commit > !serv_state.commitIndex
     then serv_state := {!serv_state with leader_id = l_id;
         commitIndex = min leader_commit (get_p_log_idx ())}
-    else serv_state := {!serv_state with leader_id = l_id;}
+    else serv_state := {!serv_state with leader_id = l_id; votedFor = None}
 
 let handle_client_as_leader msg =
     failwith "
@@ -645,7 +648,7 @@ let rec handle_connection ic oc () =
             print_endline "wow!";
             handle_message m oc;
             (handle_connection ic oc) ();
-        | None -> (handle_connection ic oc) ())
+        | None -> begin Lwt_log.info "Connection closed." >>= return end)
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
