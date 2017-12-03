@@ -452,8 +452,8 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
     Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_win_election ());
+    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
 
 and init_candidate () =
     change_heartbeat ();
@@ -597,7 +597,6 @@ let rec handle_connection ic oc () =
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
     change_heartbeat ();
-    listen_connection !channels;
     print_endline "changed heart";
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
