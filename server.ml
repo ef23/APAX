@@ -24,8 +24,8 @@ type state = {
     lastApplied : int;
     heartbeat : float;
     neighboringIPs : (string*int) list; (* ip * port *)
-    nextIndexList : int list;
-    matchIndexList : int list;
+    nextIndexList : (string*int) list; (* id * next index *)
+    matchIndexList : (string*int) list; (* id * match index *)
     received_heartbeat : bool;
 }
 
@@ -410,9 +410,24 @@ and act_leader () =
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
 and init_leader () =
-    (* let old_thr = !curr_role_thr in *)
-    (* Thread.kill old_thr; *)
+    let rec build_match_index build ips = 
+        match ips with
+        | [] -> serv_state := {!serv_state with matchIndexList = build;}; ()
+        | (inum,port)::t -> 
+            let nbuild = (inum^(string_of_int port), 0)::build in
+            build_match_index nbuild t in
+
+    let rec build_next_index build ips n_idx = 
+        match ips with
+        | [] -> serv_state := {!serv_state with nextIndexList = build;}; ()
+        | (inum,port)::t -> 
+            let nbuild = (inum^(string_of_int port), n_idx)::build in
+            build_match_index nbuild t in
+    
     print_endline "init leader";
+    build_match_index [] !serv_state.neighboringIPs;
+    let n_idx = (get_p_log_idx ()) + 1 in
+    build_next_index [] !serv_state.neighboringIPs;
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
@@ -455,6 +470,9 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
+    print_endline "act follower";
+    serv_state := {!serv_state with role = Follower};
+
     act_all ();
     (* check if the timeout has expired, and that it has voted for no one *)
     print_endline "hearbteat for";
@@ -498,11 +516,16 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
-let handle_precheck t =
-    if t > !serv_state.currentTerm then
-    (serv_state := {!serv_state with currentTerm = t; role = Follower};
-    (* immediately transition to follower (according to spec at least) *)
-    (init_follower ());())
+(* [handle_precheck t] checks the term of the sending server and updates this
+ * server's term if it is outdated; also immediately reverts to follower role
+ * if not already a follower *)
+let handle_precheck t = 
+    let b = !serv_state.role = Candidate || !serv_state.role = Leader in
+    if t > !serv_state.currentTerm && b then
+        (serv_state := {!serv_state with currentTerm = t;};
+        (init_follower ());())
+    else if t > !serv_state.currentTerm then
+        serv_state := {!serv_state with currentTerm = t;};()
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
