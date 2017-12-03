@@ -337,10 +337,11 @@ let rec send_rpcs f =
     send_to_ocs lst_o
 
 let rec send_heartbeat oc () =
+    let temp_str = "kek" in
     Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
-        "\"leader_id:\"" ^ !serv_state.leader_id ^ "," ^
+        "\"leader_id\":" ^ "\"" ^ temp_str (* !serv_state.leader_id *) ^ "\"" ^ "," ^
         "\"term\":" ^ string_of_int !serv_state.currentTerm ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
@@ -410,20 +411,20 @@ and act_leader () =
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
 and init_leader () =
-    let rec build_match_index build ips = 
+    let rec build_match_index build ips =
         match ips with
         | [] -> serv_state := {!serv_state with matchIndexList = build;}; ()
-        | (inum,port)::t -> 
+        | (inum,port)::t ->
             let nbuild = (inum^(string_of_int port), 0)::build in
             build_match_index nbuild t in
 
-    let rec build_next_index build ips n_idx = 
+    let rec build_next_index build ips n_idx =
         match ips with
         | [] -> serv_state := {!serv_state with nextIndexList = build;}; ()
-        | (inum,port)::t -> 
+        | (inum,port)::t ->
             let nbuild = (inum^(string_of_int port), n_idx)::build in
             build_match_index nbuild t in
-    
+
     print_endline "init leader";
     build_match_index [] !serv_state.neighboringIPs;
     let n_idx = (get_p_log_idx ()) + 1 in
@@ -519,7 +520,7 @@ and terminate_election () =
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
  * if not already a follower *)
-let handle_precheck t = 
+let handle_precheck t =
     let b = !serv_state.role = Candidate || !serv_state.role = Leader in
     if t > !serv_state.currentTerm && b then
         (serv_state := {!serv_state with currentTerm = t;};
