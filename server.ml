@@ -146,7 +146,6 @@ let stringify_entry (e:entry): string =
     "}"
   in json
 
-
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
@@ -263,50 +262,38 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
-let handle_ae_req msg oc =
-    let ap_term = msg |> member "ap_term" |> to_int in
-    let leader_id = msg |> member "leader_id" |> to_string in
-    let prev_log_index = msg |> member "prev_log_index" |> to_int in
-    let prev_log_term = msg |> member "prev_log_term" |> to_int in
-    let entries = msg |> member "entries" |> to_string |> json_es in
-    let leader_commit = msg |> member "leader_commit" |> to_int in
-    let success_bool =
-        if ap_term < !serv_state.currentTerm then false (* 1 *)
-        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false (* 2 *)
-        else true
-    in
-    let ae_res = {
-        success = success_bool;
-        current_term = !serv_state.currentTerm;
-    } in
-    process_conflicts entries; (* 3 *)
-    append_new_entries entries; (* 4 *)
-    if leader_commit > !serv_state.commitIndex then
-        (let new_commit = min leader_commit (get_p_log_idx ()) in
-        serv_state := {!serv_state with commitIndex = new_commit}); (* 5 *)
-    res_append_entries ae_res oc
+let req_append_entries (msg : append_entries_req) oc =
+    let json =
+       "{" ^
+        "\"type\": appd_req," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+(*
 
-    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
 
-let handle_ae_res msg oc =
-    let current_term = msg |> member "current_term" |> to_int in
-    let success = msg |> member "success" |> to_bool in
+ " *)
 
-    (* TODO wtf do we do with current_term??? *)
-
-    let s_count = (if success then !success_count + 1 else !success_count) in
-    let t_count = !response_count + 1 in
-    if s_count > ((List.length !serv_state.neighboringIPs) / 2) then
-        ((* reset counters *)
-        response_count := 0; success_count := 0;
-        (* TODO commit to log *)
-        ())
-    else if t_count = List.length !serv_state.neighboringIPs then
-        ((* reset reset counters *)
-        response_count := 0; success_count := 0;
-        ()) (* TODO notify client of failure *)
-    else () (* do nothing basically *)
-
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{" ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+      "}"
+    in send_msg json oc
 
 let req_request_vote ballot oc =
     let json =
@@ -384,6 +371,13 @@ let send_heartbeats () =
     print_endline (string_of_int (List.length lst_o));
     send_to_ocs lst_o
 
+(* [act_all ()] is a simple check that all servers perform regularly, regardless
+ * of role. It should be called at the start of every iteration of one of the
+ * act functions for roles *)
+let act_all () =
+    let la = !serv_state.lastApplied in
+    if !serv_state.commitIndex > la then
+    (serv_state := {!serv_state with lastApplied = la + 1; };); ()
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
@@ -415,6 +409,7 @@ let rec start_election () =
 and act_leader () =
     (* start thread to periodically send heartbeats *)
     print_endline "act leader";
+    act_all();
     send_heartbeats (); ()
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
@@ -432,6 +427,7 @@ and act_candidate () =
     (* if the candidate is still a follower, then start a new election
      * otherwise terminate. *)
     print_endline "act candidate";
+    act_all ();
     let check_election_complete () =
         (* if false, then election has not completed, so start new election.
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
@@ -470,6 +466,8 @@ and init_candidate () =
  *)
 and act_follower () =
     print_endline "act follower";
+    act_all ();
+    (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin
@@ -507,11 +505,72 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
+let handle_precheck t =
+    if t > !serv_state.currentTerm then
+    (serv_state := {!serv_state with currentTerm = t; role = Follower};
+    (* immediately transition to follower (according to spec at least) *)
+    (init_follower ());())
+
+let handle_ae_req msg oc =
+    let ap_term = msg |> member "ap_term" |> to_int in
+    let leader_id = msg |> member "leader_id" |> to_string in
+    let prev_log_index = msg |> member "prev_log_index" |> to_int in
+    let prev_log_term = msg |> member "prev_log_term" |> to_int in
+    let entries = msg |> member "entries" |> to_string |> json_es in
+    let leader_commit = msg |> member "leader_commit" |> to_int in
+
+    handle_precheck ap_term;
+
+    let success_bool =
+        if ap_term < !serv_state.currentTerm then false (* 1 *)
+        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false (* 2 *)
+        else true
+    in
+    let ae_res = {
+        success = success_bool;
+        current_term = !serv_state.currentTerm;
+    } in
+    process_conflicts entries; (* 3 *)
+    append_new_entries entries; (* 4 *)
+    if leader_commit > !serv_state.commitIndex then
+        (let new_commit = min leader_commit (get_p_log_idx ()) in
+        serv_state := {!serv_state with commitIndex = new_commit}); (* 5 *)
+    res_append_entries ae_res oc
+
+    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
+
+let handle_ae_res msg oc =
+    let current_term = msg |> member "current_term" |> to_int in
+    let success = msg |> member "success" |> to_bool in
+
+    handle_precheck current_term;
+
+    let s_count = (if success then !success_count + 1 else !success_count) in
+    let t_count = !response_count + 1 in
+    if s_count > ((List.length !serv_state.neighboringIPs) / 2) then
+        ((* reset counters *)
+        response_count := 0; success_count := 0;
+        (* TODO commit to log *)
+        ())
+    else if t_count = List.length !serv_state.neighboringIPs then
+        ((* reset reset counters *)
+        response_count := 0; success_count := 0;
+        ()) (* TODO notify client of failure *)
+    else () (* do nothing basically *)
+
+let handle_vote_req msg oc =
+    print_endline "this is vote req";
+    print_endline (string_of_bool (!serv_state.role = Follower));
+    let t = msg |> member "term" |> to_int in
+    handle_precheck t;
+    res_request_vote msg oc; ()
+
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg =
     print_endline "here!";
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
+    handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -538,7 +597,7 @@ let handle_message msg oc =
     match msg_type with
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
-    | "vote_req" -> begin print_endline "this is vote req"; print_endline (string_of_bool (!serv_state.role = Follower)); res_request_vote msg oc; () end
+    | "vote_req" -> handle_vote_req msg oc; ()
     | "vote_res" -> handle_vote_res msg; ()
     | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
                     then serv_state := {!serv_state with role = Follower};
