@@ -24,8 +24,8 @@ type state = {
     lastApplied : int;
     heartbeat : float;
     neighboringIPs : (string*int) list; (* ip * port *)
-    nextIndexList : int list;
-    matchIndexList : int list;
+    nextIndexList : (string*int) list; (* id * next index *)
+    matchIndexList : (string*int) list; (* id * match index *)
     received_heartbeat : bool;
 }
 
@@ -379,9 +379,24 @@ and act_leader () =
     (* LOG REPLICATIONS *)
     (* TODO listen for client req and send appd_entries *)
 and init_leader () =
-    (* let old_thr = !curr_role_thr in *)
-    (* Thread.kill old_thr; *)
+    let rec build_match_index build ips = 
+        match ips with
+        | [] -> serv_state := {!serv_state with matchIndexList = build;}; ()
+        | (inum,port)::t -> 
+            let nbuild = (inum^(string_of_int port), 0)::build in
+            build_match_index nbuild t in
+
+    let rec build_next_index build ips n_idx = 
+        match ips with
+        | [] -> serv_state := {!serv_state with nextIndexList = build;}; ()
+        | (inum,port)::t -> 
+            let nbuild = (inum^(string_of_int port), n_idx)::build in
+            build_match_index nbuild t in
+    
     print_endline "init leader";
+    build_match_index [] !serv_state.neighboringIPs;
+    let n_idx = (get_p_log_idx ()) + 1 in
+    build_next_index [] !serv_state.neighboringIPs;
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
