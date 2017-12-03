@@ -14,19 +14,19 @@ open Yojson.Basic.Util
 type role = | Follower | Candidate | Leader
 
 type state = {
-    id : string;
-    leader_id: string;
-    role : role;
-    currentTerm : int;
-    votedFor : string option;
-    log : (int * entry) list;
-    commitIndex : int;
-    lastApplied : int;
-    heartbeat : float;
-    neighboringIPs : (string*int) list; (* ip * port *)
-    nextIndexList : (string*int) list; (* id * next index *)
-    matchIndexList : (string*int) list; (* id * match index *)
-    received_heartbeat : bool;
+    mutable id : string;
+    mutable leader_id: string;
+    mutable role : role;
+    mutable currentTerm : int;
+    mutable votedFor : string option;
+    mutable log : (int * entry) list;
+    mutable commitIndex : int;
+    mutable lastApplied : int;
+    mutable heartbeat : float;
+    mutable neighboringIPs : (string*int) list; (* ip * port *)
+    mutable nextIndexList : (string*int) list; (* id * next index *)
+    mutable matchIndexList : (string*int) list; (* id * match index *)
+    mutable received_heartbeat : bool;
 }
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
@@ -40,7 +40,7 @@ let generate_heartbeat () =
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
-let serv_state = ref {
+let serv_state = {
     id = "";
     leader_id = "";
     role = Follower;
@@ -60,7 +60,7 @@ let serv_state = ref {
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
-    match !serv_state.log with
+    match serv_state.log with
     | [] -> None
     | (_, e)::_ -> Some e
 
@@ -95,8 +95,8 @@ let read_neighboring_ips port_num =
       let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
       let new_ip = (ip_str, port_int) in
       if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
-        let updated_ips = new_ip::!serv_state.neighboringIPs in
-        serv_state := {!serv_state with neighboringIPs = updated_ips};
+        let updated_ips = new_ip::serv_state.neighboringIPs in
+        serv_state.neighboringIPs <- updated_ips;
       else
         ();
       process_file f_channel
@@ -113,12 +113,11 @@ let success_count = ref 0
 
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
-    serv_state := {!serv_state with
-            heartbeat = new_heartbeat;
-        }
+    serv_state.heartbeat <- new_heartbeat
 
 let update_neighbors ips id =
-    serv_state := {!serv_state with neighboringIPs = ips; id = id}
+    serv_state.neighboringIPs <- ips;
+    serv_state.id <- id
 
 let channels = ref []
 
@@ -226,7 +225,7 @@ let process_conflicts entries =
             if (i = new_e.index && does_conflict log_e new_e) then t
             else iter_log old_l t new_e in
 
-    let old_log = !serv_state.log in
+    let old_log = serv_state.log in
 
     (* [iter_entries el s_log] looks for conflicts for each entry in [el]
      * and keeps track of the shortest log [short_log] *)
@@ -239,7 +238,7 @@ let process_conflicts entries =
             else iter_entries t short_log in
 
     let n_log = iter_entries entries old_log in
-    serv_state := {!serv_state with log = n_log}; ()
+    serv_state.log <- n_log
 
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
@@ -248,14 +247,14 @@ let rec append_new_entries (entries : entry list) : unit =
         | [] -> ()
         | h::t ->
             begin
-                if List.exists (fun (_,e) -> e = h) !serv_state.log
+                if List.exists (fun (_,e) -> e = h) serv_state.log
                 then append_new t
                 else
-                let old_st_log = !serv_state.log in
+                let old_st_log = serv_state.log in
                 let new_ind = List.length old_st_log + 1 in
                 let new_entry = {h with index = new_ind} in
                 let new_addition = (new_ind, new_entry) in
-                serv_state := {!serv_state with log = new_addition::old_st_log};
+                serv_state.log <- new_addition::old_st_log;
                 append_new t
             end
     in
@@ -302,25 +301,25 @@ let req_request_vote ballot oc =
 (* [res_request_vote msg oc] handles receiving a vote request message *)
 let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
-    let continue = match !serv_state.votedFor with
+    let continue = match serv_state.votedFor with
                     | None -> true
                     | Some id -> print_endline id; print_endline candidate_id; id=candidate_id in
     let otherTerm = msg |> member "term" |> to_int in
     let last_log_term = msg |> member "last_log_term" |> to_int in
     let last_log_index = msg |> member "last_log_index" |> to_int in
-    let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
-    if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)};
+    let vote_granted = continue && otherTerm >= serv_state.currentTerm in
+    if (vote_granted) then serv_state.votedFor <- (Some candidate_id);
     let json =
-          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
-    (* match !serv_state.lastEntry with
+    (* match serv_state.lastEntry with
     | Some log ->
         let curr_log_ind = log.index in
         let curr_log_term = log.entryTerm in
-        let vote_granted = continue && otherTerm >= !serv_state.currentTerm &&
+        let vote_granted = continue && otherTerm >= serv_state.currentTerm &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
         let json =
-          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"current_term\": " ^ (string_of_int serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     | None -> failwith "kek" *)
 
@@ -341,12 +340,12 @@ let rec send_heartbeat oc () =
     Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ temp_str (* !serv_state.leader_id *) ^ "\"" ^ "," ^
-        "\"term\":" ^ string_of_int !serv_state.currentTerm ^ "," ^
+        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
         "\"entries\": \"\"," ^
-        "\"leader_commit\":" ^ string_of_int !serv_state.commitIndex ^
+        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
         "}");
     Lwt_io.flush oc;
     Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
@@ -373,26 +372,24 @@ let send_heartbeats () =
  * of role. It should be called at the start of every iteration of one of the
  * act functions for roles *)
 let act_all () =
-    let la = !serv_state.lastApplied in
-    if !serv_state.commitIndex > la then
-    (serv_state := {!serv_state with lastApplied = la + 1; };); ()
+    let la = serv_state.lastApplied in
+    if serv_state.commitIndex > la then
+    (serv_state.lastApplied <- la + 1); ()
 
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
     print_endline "election started!";
     (* increment term and vote for self *)
-    let curr_term = !serv_state.currentTerm in
-    serv_state := {
-        !serv_state with currentTerm = curr_term + 1;
-                         votedFor = (Some !serv_state.id)
-                    };
+    let curr_term = serv_state.currentTerm in
+    serv_state.currentTerm <- curr_term + 1;
+    serv_state.votedFor <- (Some serv_state.id);
     vote_counter := 1;
-    let neighbors = !serv_state.neighboringIPs in
+    let neighbors = serv_state.neighboringIPs in
     (* ballot is a vote_req *)
     let ballot = {
-        term = !serv_state.currentTerm;
-        candidate_id = !serv_state.id;
+        term = serv_state.currentTerm;
+        candidate_id = serv_state.id;
         last_log_index = get_p_log_idx ();
         last_log_term = get_p_log_term ();
     } in
@@ -413,22 +410,22 @@ and act_leader () =
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
-        | [] -> serv_state := {!serv_state with matchIndexList = build;}; ()
+        | [] -> serv_state.matchIndexList <- build; ()
         | (inum,port)::t ->
             let nbuild = (inum^(string_of_int port), 0)::build in
             build_match_index nbuild t in
 
     let rec build_next_index build ips n_idx =
         match ips with
-        | [] -> serv_state := {!serv_state with nextIndexList = build;}; ()
+        | [] -> serv_state.nextIndexList <- build; ()
         | (inum,port)::t ->
             let nbuild = (inum^(string_of_int port), n_idx)::build in
             build_match_index nbuild t in
 
     print_endline "init leader";
-    build_match_index [] !serv_state.neighboringIPs;
+    build_match_index [] serv_state.neighboringIPs;
     let n_idx = (get_p_log_idx ()) + 1 in
-    build_next_index [] !serv_state.neighboringIPs;
+    build_next_index [] serv_state.neighboringIPs;
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
@@ -444,10 +441,10 @@ and act_candidate () =
         (* if false, then election has not completed, so start new election.
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
-        print_endline (string_of_bool (!serv_state.role = Candidate ));
-        if !serv_state.role = Candidate
+        print_endline (string_of_bool (serv_state.role = Candidate ));
+        if serv_state.role = Candidate
         then begin
-                serv_state := {!serv_state with votedFor = None};
+                serv_state.votedFor <- None;
                 Lwt.bind hb_interval (fun () -> act_candidate ())
             end
         else Lwt.return () in
@@ -457,8 +454,8 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    if (List.length !serv_state.neighboringIPs)=1 then win_election ();
-    Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> check_election_complete ())
+    if (List.length serv_state.neighboringIPs)=1 then win_election ();
+    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -472,35 +469,35 @@ and init_candidate () =
  *)
 and act_follower () =
     print_endline "act follower";
-    serv_state := {!serv_state with role = Follower};
+    serv_state.role <- Follower;
 
     act_all ();
     (* check if the timeout has expired, and that it has voted for no one *)
     print_endline "hearbteat for";
-    print_endline (string_of_bool !serv_state.received_heartbeat);
+    print_endline (string_of_bool serv_state.received_heartbeat);
     print_endline "voted for";
-    print_endline (string_of_bool (!serv_state.votedFor = None));
-    if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
+    print_endline (string_of_bool (serv_state.votedFor = None));
+    if (serv_state.votedFor = None && serv_state.received_heartbeat = false)
     then begin
-            serv_state := {!serv_state with role=Candidate};
+            serv_state.role <- Candidate;
             init_candidate ()
         end
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
-            serv_state := {!serv_state with received_heartbeat = false};
-            Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> act_follower ())
+            serv_state.received_heartbeat <- false;
+            Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
         end
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.bind (Lwt_unix.sleep !serv_state.heartbeat) (fun () -> (act_follower ()));
+    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
 and win_election () =
     print_endline "ayyyy";
     (* transition to Leader role *)
-    serv_state := {!serv_state with role = Leader};
+    serv_state.role <- Leader;
     (* send heartbeats *)
     init_leader ()
 
@@ -508,7 +505,7 @@ and win_election () =
  * and executes the appropriate actions *)
 and lose_election () =
     (* transition to Follower role *)
-    serv_state := {!serv_state with role = Follower};
+    serv_state.role <- Follower;
     act_follower ()
 
 (* [terminate_election ()] executes when timeout occurs in the middle of an
@@ -521,12 +518,12 @@ and terminate_election () =
  * server's term if it is outdated; also immediately reverts to follower role
  * if not already a follower *)
 let handle_precheck t =
-    let b = !serv_state.role = Candidate || !serv_state.role = Leader in
-    if t > !serv_state.currentTerm && b then
-        (serv_state := {!serv_state with currentTerm = t;};
+    let b = serv_state.role = Candidate || serv_state.role = Leader in
+    if t > serv_state.currentTerm && b then
+        (serv_state.currentTerm <- t;
         (init_follower ());())
-    else if t > !serv_state.currentTerm then
-        serv_state := {!serv_state with currentTerm = t;};()
+    else if t > serv_state.currentTerm then
+        serv_state.currentTerm <- t;()
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
@@ -539,19 +536,19 @@ let handle_ae_req msg oc =
     handle_precheck ap_term;
 
     let success_bool =
-        if ap_term < !serv_state.currentTerm then false (* 1 *)
-        else if mismatch_log !serv_state.log prev_log_index prev_log_term then false (* 2 *)
+        if ap_term < serv_state.currentTerm then false (* 1 *)
+        else if mismatch_log serv_state.log prev_log_index prev_log_term then false (* 2 *)
         else true
     in
     let ae_res = {
         success = success_bool;
-        current_term = !serv_state.currentTerm;
+        current_term = serv_state.currentTerm;
     } in
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
-    if leader_commit > !serv_state.commitIndex then
+    if leader_commit > serv_state.commitIndex then
         (let new_commit = min leader_commit (get_p_log_idx ()) in
-        serv_state := {!serv_state with commitIndex = new_commit}); (* 5 *)
+        serv_state.commitIndex <- new_commit); (* 5 *)
     res_append_entries ae_res oc
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
@@ -564,12 +561,12 @@ let handle_ae_res msg oc =
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
-    if s_count > ((List.length !serv_state.neighboringIPs) / 2) then
+    if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* TODO commit to log *)
         ())
-    else if t_count = List.length !serv_state.neighboringIPs then
+    else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
         ()) (* TODO notify client of failure *)
@@ -577,7 +574,7 @@ let handle_ae_res msg oc =
 
 let handle_vote_req msg oc =
     print_endline "this is vote req";
-    print_endline (string_of_bool (!serv_state.role = Follower));
+    print_endline (string_of_bool (serv_state.role = Follower));
     let t = msg |> member "term" |> to_int in
     (* handle_precheck t; *)
     res_request_vote msg oc; ()
@@ -590,7 +587,7 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     (* handle_precheck currTerm; *)
     if voted then vote_counter := !vote_counter + 1;
-    if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
+    if !vote_counter > (((List.length serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -598,10 +595,12 @@ let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
     let leader_commit = msg |> member "leader_commit" |> to_int in
 
-    if leader_commit > !serv_state.commitIndex
-    then serv_state := {!serv_state with leader_id = l_id;
-        commitIndex = min leader_commit (get_p_log_idx ())}
-    else serv_state := {!serv_state with leader_id = l_id; votedFor = None}
+    if leader_commit > serv_state.commitIndex
+    then begin
+            serv_state.leader_id <- l_id;
+            serv_state.commitIndex <- min leader_commit (get_p_log_idx ())
+        end
+    else serv_state.leader_id <- l_id; serv_state.votedFor <- None
 
 let handle_client_as_leader msg =
     failwith "
@@ -611,7 +610,7 @@ let handle_client_as_leader msg =
 
 let handle_message msg oc =
     print_endline ("here:"^msg);
-    serv_state := {!serv_state with received_heartbeat = true};
+    serv_state.received_heartbeat <- true;
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
@@ -619,14 +618,19 @@ let handle_message msg oc =
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
     | "vote_res" -> handle_vote_res msg; ()
-    | "appd_req" -> begin print_endline "received app"; if !serv_state.role = Candidate
-                    then serv_state := {!serv_state with role = Follower};
-                    handle_ae_req msg oc; () end
+    | "appd_req" -> begin
+                        print_endline "received app";
+                        handle_ae_req msg oc;
+                        (* TODO: FIX BELOW LINE!! *)
+                        (* if serv_state.role = Candidate
+                        then lose_election (); *)
+                        ()
+                    end
     | "appd_res" -> ()
     | "client" ->
         (* TODO redirect client to Leader *)
-        if !serv_state.role <> Leader then
-            (print_endline !serv_state.leader_id; ())
+        if serv_state.role <> Leader then
+            (print_endline serv_state.leader_id; ())
         else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
@@ -639,17 +643,17 @@ let handle_message msg oc =
                 } in
 
             let rpc = {
-                ap_term = !serv_state.currentTerm;
-                leader_id = !serv_state.id;
+                ap_term = serv_state.currentTerm;
+                leader_id = serv_state.id;
                 prev_log_index = p_log_idx ();
                 prev_log_term = p_log_term ();
                 entries = [];
-                leader_commit = !serv_state.commitIndex;
+                leader_commit = serv_state.commitIndex;
             } in
 
-            let old_log = !serv_state.log in
+            let old_log = serv_state.log in
             let new_idx = (List.length old_log) + 1 in
-            serv_state := {!serv_state with log = ((new_idx,new_entry)::old_log)};
+            serv_state.log <- (new_idx,new_entry)::old_log;
             req_append_entries rpc oc; ()
     | _ -> ()
 
@@ -694,7 +698,7 @@ let accept_connection conn =
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     let otherl = !channels in
     channels := ((ic, oc)::otherl);
-    let iplistlen = List.length (!serv_state.neighboringIPs) in
+    let iplistlen = List.length (serv_state.neighboringIPs) in
     if (List.length !channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
 
@@ -728,11 +732,11 @@ let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
-        print_endline (string_of_int (List.length (!serv_state.neighboringIPs)));
+        print_endline (string_of_int (List.length (serv_state.neighboringIPs)));
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !channels in
              channels := ((ic, oc)::otherl);
-             let iplistlen = List.length (!serv_state.neighboringIPs) in
+             let iplistlen = List.length (serv_state.neighboringIPs) in
              if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
         Lwt_log.info "added connection" >>= return
     with
@@ -741,7 +745,7 @@ let main_client address portnum =
 
 let establish_connections_to_others () =
     print_endline "establish";
-    let ip_ports_list = !serv_state.neighboringIPs in
+    let ip_ports_list = serv_state.neighboringIPs in
     let rec get_connections lst =
         match lst with
         | [] -> ()
@@ -760,7 +764,7 @@ let create_server sock =
     in serve
 
 let rec st port_num =
-    serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
+    serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     print_endline "i finished";
