@@ -379,7 +379,6 @@ let send_heartbeats () =
     print_endline "number of ocs";
     print_endline (string_of_int (List.length lst_o));
     send_to_ocs lst_o
-    (* Async.Scheduler.go () *)
 
 let hb_timer = (Lwt_unix.sleep !serv_state.heartbeat)
 
@@ -451,7 +450,6 @@ and act_candidate () =
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     start_election ();
-
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
     Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
@@ -584,43 +582,35 @@ let handle_message msg oc =
 
 
 let rec handle_connection ic oc () =
-    (*print_endline "ur stuck with me";
-    let can_cancel = fst (Lwt.task ()) in
-    if false=true then Lwt.cancel can_cancel else*)
-    Async.Deferred.bind (Async.Deferred.return (
-        let%lwt str = (Lwt_io.read_line_opt ic) in
-        while str = None do print_endline "Kek" done;
-        match str with
+    print_endline "ur stuck with me";
+    Lwt_io.read_line_opt ic >>=
+    (fun (msg) ->
+        match msg with
         | (Some m) ->
             print_endline "wow!";
             handle_message m oc;
-            Lwt_log.info "fdsa" >>= return
-        | None -> begin Lwt_log.info "fdsa" >>= return end))
-    (fun _ -> (handle_connection ic oc) ())
-
-
+            (handle_connection ic oc) ();
+        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-    let rec listen_connection lst =
-        match lst with
-        | [] -> ()
-        | (ic, oc)::t ->
-            begin (handle_connection ic oc); listen_connection t
-            end in
     change_heartbeat ();
     listen_connection !channels;
-    Lwt.async (init_follower); ()
-    (* Async.Scheduler.go (); () *)
+    print_endline "changed heart";
+    List.iter
+    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
+    print_endline "after list";
+    Lwt.async (init_follower);
+    print_endline "rigth before"
 
 let accept_connection conn =
-    print_endline "accepted";
+   print_endline "accepted";
     let fd, _ = conn in
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
-    (*Lwt.on_failure *)(handle_connection ic oc ());(* (fun e -> Lwt_log.ign_error (Printexc.to_string e));*)
     let otherl = !channels in
     channels := ((ic, oc)::otherl);
     let iplistlen = List.length (!serv_state.neighboringIPs) in
@@ -692,8 +682,10 @@ let rec st port_num =
     serv_state := {!serv_state with id=((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num))};
     read_neighboring_ips port_num;
     establish_connections_to_others ();
+    print_endline "i finished";
     let sock = create_socket port_num () in
     let serve = create_server sock in
+    print_endline "running";
     Lwt_main.run @@ serve ();;
 
 let kek () = init_server ()
