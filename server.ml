@@ -22,20 +22,19 @@ type state = {
     log : (int * entry) list;
     commitIndex : int;
     lastApplied : int;
-    heartbeat : int;
+    heartbeat : float;
     neighboringIPs : (string*int) list; (* ip * port *)
     nextIndexList : int list;
     matchIndexList : int list;
-    internal_timer : int;
     received_heartbeat : bool;
 }
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 150 in
-    let range = 150 in
-    let timer = (Random.int range) + lower in
-    print_endline ("timer:"^(string_of_int timer));
+    let lower = 0.150 in
+    let range = 0.150 in
+    let timer = (Random.float range) +. lower in
+    print_endline ("timer:"^(string_of_float timer));
     timer
 
 let get_my_addr () =
@@ -50,11 +49,10 @@ let serv_state = ref {
     log = [];
     commitIndex = 0;
     lastApplied = 0;
-    heartbeat = 0;
+    heartbeat = 0.;
     neighboringIPs = [];
     nextIndexList = [];
     matchIndexList = [];
-    internal_timer = 0;
     received_heartbeat = false;
 }
 
@@ -117,13 +115,7 @@ let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
     serv_state := {!serv_state with
             heartbeat = new_heartbeat;
-            internal_timer = new_heartbeat;
         }
-
-let dec_timer () = serv_state :=
-    {
-        !serv_state with internal_timer = (!serv_state.internal_timer - 1);
-    }
 
 let update_neighbors ips id =
     serv_state := {!serv_state with neighboringIPs = ips; id = id}
@@ -350,6 +342,8 @@ let act_all () =
     if !serv_state.commitIndex > la then 
     (serv_state := {!serv_state with lastApplied = la + 1; };); ()
 
+let hb_timer = (Lwt_unix.sleep !serv_state.heartbeat)
+
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
@@ -403,10 +397,9 @@ and act_candidate () =
         (* if false, then election has not completed, so start new election.
          * Otherwise if true, then don't do anything (equiv of cancelling timer)
          *)
-         print_endline (string_of_bool (!serv_state.role = Candidate ));
-        if !serv_state.role = Candidate
-        then (act_candidate ())
-         in
+        print_endline (string_of_bool (!serv_state.role = Candidate ));
+        if !serv_state.role = Candidate then act_candidate ()
+        else Lwt.return () in
 
     (* this will be continuously run to check if the election has been won by
      * this candidate *)
@@ -416,22 +409,19 @@ and act_candidate () =
         (* if majority of votes, proceed to win election *)
         if !vote_counter > (((List.length !serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
-        else
-            (check_win_election ()) in
+        else check_win_election () in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_election_complete);
-    Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ())) (check_win_election)
+    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_win_election ());
+    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
 
 and init_candidate () =
-    (* let old_thr = !curr_role_thr in *)
-    (* Thread.kill old_thr; *)
     change_heartbeat ();
-    act_candidate (); ()
+    act_candidate ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -445,17 +435,19 @@ and act_follower () =
     (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
-    then begin (serv_state := {!serv_state with role=Candidate}; init_candidate ());  end
+    then begin
+            serv_state := {!serv_state with role=Candidate};
+            init_candidate ()
+        end
     (* if condition satisfied, continue being follower, otherwise start elec *)
-    else begin serv_state := {!serv_state with received_heartbeat = false}; (Async.upon (Async.after (Core.Time.Span.create ~ms:1000 ()))
-        (act_follower)); end
+    else begin
+            serv_state := {!serv_state with received_heartbeat = false};
+            Lwt.bind hb_timer (fun () -> act_follower ())
+        end
 
 and init_follower () =
-    (* let old_thr = !curr_role_thr in *)
-    (* Thread.kill old_thr; *)
     print_endline "init follower";
-    (Async.upon (Async.after (Core.Time.Span.create ~ms:!serv_state.heartbeat ()))
-        (act_follower));
+    Lwt.bind hb_timer (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -463,7 +455,7 @@ and win_election () =
     (* transition to Leader role *)
     serv_state := {!serv_state with role = Leader};
     (* send heartbeats *)
-    init_leader (); ()
+    Lwt.return (init_leader ())
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
@@ -553,10 +545,8 @@ let process_heartbeat msg =
 
     if leader_commit > !serv_state.commitIndex
     then serv_state := {!serv_state with leader_id = l_id;
-        internal_timer = !serv_state.heartbeat;
         commitIndex = min leader_commit (get_p_log_idx ())}
-    else serv_state := {!serv_state with leader_id = l_id;
-        internal_timer = !serv_state.heartbeat}
+    else serv_state := {!serv_state with leader_id = l_id;}
 
 let handle_client_as_leader msg =
     failwith "
@@ -636,11 +626,11 @@ let rec handle_connection ic oc () =
 let init_server () =
     change_heartbeat ();
     print_endline "changed heart";
-    List.iter 
-    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ()) 
+    List.iter
+    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
         (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
     print_endline "after list";
-    init_follower ();
+    Lwt.async (init_follower);
     print_endline "rigth before"
 
 let accept_connection conn =
@@ -724,6 +714,8 @@ let rec st port_num =
     let serve = create_server sock in
     print_endline "running";
     Lwt_main.run @@ serve ();;
+
+let kek () = init_server ()
 
 let _ = Random.self_init()
     (* any more scheduled tasks will run after this *)
