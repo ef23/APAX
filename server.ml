@@ -151,40 +151,6 @@ let stringify_entry (e:entry): string =
     "}"
   in json
 
-
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": appd_req," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
-(*
-
-    failwith
- "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
- listen for responses.
- - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
-
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
  *)
@@ -266,6 +232,39 @@ let rec append_new_entries (entries : entry list) : unit =
             end
     in
     append_new entries
+
+let req_append_entries (msg : append_entries_req) oc =
+    let json =
+       "{" ^
+        "\"type\": appd_req," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+(*
+
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ " *)
+
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{" ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+      "}"
+    in send_msg json oc
 
 let req_request_vote ballot oc =
     let json =
@@ -518,7 +517,7 @@ let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
 
-    (* TODO wtf do we do with current_term??? *)
+    handle_precheck current_term;
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
@@ -535,13 +534,16 @@ let handle_ae_res msg oc =
 
 let handle_vote_req msg oc = 
     print_endline "this is vote req"; 
-    print_endline (string_of_bool (!serv_state.role = Follower)); 
+    print_endline (string_of_bool (!serv_state.role = Follower));
+    let t = msg |> member "term" |> to_int in
+    handle_precheck t;
     res_request_vote msg oc; ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg hi =
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
+    handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
