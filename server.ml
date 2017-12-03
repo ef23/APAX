@@ -480,10 +480,9 @@ and terminate_election () =
 
 let handle_precheck t = 
     if t > !serv_state.currentTerm then
-    (serv_state := {!serv_state with currentTerm = t; role = Follower};);
-    (* TODO do i go through with the rest of the req/res or do i immediately
-     * go to init/act_follower()???? *)
-    ()
+    (serv_state := {!serv_state with currentTerm = t; role = Follower};
+    (* immediately transition to follower (according to spec at least) *)
+    init_follower ();); ()
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
