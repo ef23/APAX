@@ -103,7 +103,7 @@ let read_neighboring_ips port_num =
     with
     | End_of_file -> Pervasives.close_in f_channel; ()
   in
-  process_file (Pervasives.open_in "ips")
+  process_file (Pervasives.open_in "ips.txt")
 
 let curr_role_thr = ref None
 
@@ -620,10 +620,9 @@ let handle_message msg oc =
     | "vote_res" -> handle_vote_res msg; ()
     | "appd_req" -> begin
                         print_endline "received app";
+                        if serv_state.role = Candidate
+                        then ignore (lose_election ());
                         handle_ae_req msg oc;
-                        (* TODO: FIX BELOW LINE!! *)
-                        (* if serv_state.role = Candidate
-                        then lose_election (); *)
                         ()
                     end
     | "appd_res" -> ()
