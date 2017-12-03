@@ -464,12 +464,9 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-<<<<<<< HEAD
-=======
+
     print_endline "act follower";
     act_all ();
-    (* TODO is this even right????? *)
->>>>>>> ed42dc429f250bb47fa30432aa266b12e3c7a9fe
     (* check if the timeout has expired, and that it has voted for no one *)
     print_endline "hearbteat for";   
     print_endline (string_of_bool !serv_state.received_heartbeat);
