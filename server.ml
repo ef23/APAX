@@ -446,6 +446,7 @@ and init_candidate () =
  *)
 and act_follower () =
     print_endline "act follower";
+    serv_state := {!serv_state with role = Follower};
     act_all ();
     (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
@@ -485,11 +486,16 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
+(* [handle_precheck t] checks the term of the sending server and updates this
+ * server's term if it is outdated; also immediately reverts to follower role
+ * if not already a follower *)
 let handle_precheck t = 
-    if t > !serv_state.currentTerm then
-    (serv_state := {!serv_state with currentTerm = t; role = Follower};
-    (* immediately transition to follower (according to spec at least) *)
-    (init_follower ());())
+    let b = !serv_state.role = Candidate || !serv_state.role = Leader in
+    if t > !serv_state.currentTerm && b then
+        (serv_state := {!serv_state with currentTerm = t;};
+        (init_follower ());())
+    else if t > !serv_state.currentTerm then
+        serv_state := {!serv_state with currentTerm = t;};()
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
