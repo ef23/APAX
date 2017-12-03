@@ -442,6 +442,7 @@ and init_candidate () =
 and act_follower () =
     print_endline "act follower";
     act_all ();
+    (* TODO is this even right????? *)
     (* check if the timeout has expired, and that it has voted for no one *)
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin (serv_state := {!serv_state with role=Candidate}; init_candidate ());  end
