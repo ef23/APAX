@@ -321,7 +321,7 @@ let res_request_vote msg oc =
     let vote_granted = continue && otherTerm >= !serv_state.currentTerm in
     if (vote_granted) then serv_state := {!serv_state with votedFor=(Some candidate_id)};
     let json =
-          "{\"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int !serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match !serv_state.lastEntry with
     | Some log ->
@@ -403,7 +403,6 @@ let rec start_election () =
     } in
     print_endline "sending rpcs...";
     send_rpcs (req_request_vote ballot);
-    print_endline "sfjadsljjgdaksgjjdkasfjkdsalk";
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
@@ -452,8 +451,8 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
     Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_win_election ());
+    Lwt.bind (Lwt_unix.sleep 1.) (fun () -> check_election_complete ());
 
 and init_candidate () =
     change_heartbeat ();
@@ -466,8 +465,11 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-    print_endline "act follower";
     (* check if the timeout has expired, and that it has voted for no one *)
+    print_endline "hearbteat for";   
+    print_endline (string_of_bool !serv_state.received_heartbeat);
+    print_endline "voted for";
+    print_endline (string_of_bool (!serv_state.votedFor = None));
     if (!serv_state.votedFor = None && !serv_state.received_heartbeat = false)
     then begin
             serv_state := {!serv_state with role=Candidate};
@@ -506,8 +508,10 @@ and terminate_election () =
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg hi =
+    print_endline "i got a vote? ";
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
+    print_endline (string_of_bool (voted));
     if voted then vote_counter := !vote_counter + 1
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -590,20 +594,19 @@ let rec handle_connection ic oc () =
             print_endline "wow!";
             handle_message m oc;
             (handle_connection ic oc) ();
-        | None -> begin print_endline "no mess"; (handle_connection ic oc) () end)
+        | None -> begin Lwt_log.info "Connection closed." >>= return end)
 
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
     change_heartbeat ();
-    listen_connection !channels;
     print_endline "changed heart";
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
         (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
     print_endline "after list";
-    Lwt.async (init_follower);
+    (init_follower ());
     print_endline "rigth before"
 
 let accept_connection conn =
