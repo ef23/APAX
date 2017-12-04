@@ -13,4 +13,3 @@
 #load "log.cmo";;
 #load "append_entries_rpc.cmo";;
 #require "lwt.ppx";;
-#use "server.ml";;
