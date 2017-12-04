@@ -605,6 +605,7 @@ and handler
                 Printf.eprintf "[RECV] CLOSE\n%!"
             | _ ->
                 (* do this shit here where u set append entries i guess *)
+                handle_client_msg f.content
                 Printf.eprintf "[RECV] %s\n%!" f.content
     );
     >>= fun (resp, body, frames_out_fn) ->
@@ -639,6 +640,39 @@ and start_websocket host port () =
 
 and listen_for_client () =
     start_websocket !ip_addr (!port_number-1000) ()
+
+and handle_client_msg msg =
+    (* create the append_entries_rpc *)
+    (* using 0 to indicate no previous entry *)
+    let p_log_idx = get_p_log_idx in
+    let p_log_term = get_p_log_term in
+    let new_entry = {
+            value = msg |> member "value" |> to_int;
+            entryTerm = msg |> member "entryTerm" |> to_int;
+            index = msg |> member "index" |> to_int;
+        } in
+
+    let rpc = {
+        ap_term = serv_state.currentTerm;
+        leader_id = serv_state.id;
+        prev_log_index = p_log_idx ();
+        prev_log_term = p_log_term ();
+        entries = [];
+        leader_commit = serv_state.commitIndex;
+    } in
+
+    let old_log = serv_state.log in
+    let new_idx = (List.length old_log) + 1 in
+    serv_state.log <- (new_idx,new_entry)::old_log;
+    send_rpcs (req_append_entries rpc); ()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * END WEBSOCKET SHIT                                                        *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
 let rec id_from_oc cl oc =
     match cl with
@@ -806,34 +840,6 @@ let handle_message msg oc =
                         ()
                     end
     | "appd_res" -> ()
-    | "client" ->
-        (* TODO redirect client to Leader *)
-        if serv_state.role <> Leader then
-            (print_endline serv_state.leader_id; ())
-        else
-            (* create the append_entries_rpc *)
-            (* using 0 to indicate no previous entry *)
-            let p_log_idx = get_p_log_idx in
-            let p_log_term = get_p_log_term in
-            let new_entry = {
-                    value = msg |> member "value" |> to_int;
-                    entryTerm = msg |> member "entryTerm" |> to_int;
-                    index = msg |> member "index" |> to_int;
-                } in
-
-            let rpc = {
-                ap_term = serv_state.currentTerm;
-                leader_id = serv_state.id;
-                prev_log_index = p_log_idx ();
-                prev_log_term = p_log_term ();
-                entries = [];
-                leader_commit = serv_state.commitIndex;
-            } in
-
-            let old_log = serv_state.log in
-            let new_idx = (List.length old_log) + 1 in
-            serv_state.log <- (new_idx,new_entry)::old_log;
-            req_append_entries rpc oc; ()
     | _ -> ()
 
 
