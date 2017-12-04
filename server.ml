@@ -89,7 +89,7 @@ let hb_interval = (Lwt_unix.sleep 1.)
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
-                            UTILITY FUNCTIONS
+                            HELPER FUNCTIONS
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
@@ -266,6 +266,20 @@ let rec send_heartbeat oc () =
         "}");
     Lwt_io.flush oc;
     Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+
+(* [force_conform id] forces server with id [id] to conform to the leader's log
+ * if there is an inconsistency between the logs (aka the AERes success would be
+ * false) *)
+let force_conform id =
+    match (nindex_from_id id serv_state.matchIndexList) with
+    | None -> failwith "should not be possible"
+    | Some ni ->
+        (* update the nextIndex for this server to be ni - 1 *)
+        (* TODO this is kinda duplicate code but idk how else to do it *)
+        let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
+        serv_state.nextIndexList <- (id, ni-1)::new_indices;
+        (* TODO do i retry the AEReq here? upon next client req? *)
+        ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -702,11 +716,16 @@ let handle_ae_req msg oc =
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
+    let responder_id = (
+        match (id_from_oc !channels oc) with
+        | None -> failwith "not possible"
+        | Some x -> x
+    ) in
 
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
-
+    if (not success) then (force_conform responder_id);
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -767,16 +786,6 @@ let update_output_channels oc msg =
     let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
     print_endline (ip^"EVERYTHING IS OK");
     channels := (ip, snd chans)::c_lst
-
-    (*remove oc and then add ip, oc*)
-
-(* [force_conform id] forces server with id [id] to conform to the leader's log
- * if there is an inconsistency between the logs (aka the AERes success would be
- * false) *)
-(* let force_conform id =
-    match (nindex_from_id id !serv_state.matchIndexList) with
-    | None -> failwith "should not be possible"
-    | Some ni -> () *)
 
 let handle_message msg oc =
     print_endline ("here:"^msg);
