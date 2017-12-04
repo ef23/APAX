@@ -21,7 +21,7 @@ type state = {
     mutable role : role;
     mutable currentTerm : int;
     mutable votedFor : string option;
-    mutable log : (int * entry) list;
+    mutable log : (int * entry) list; (* index * entry list *)
     mutable commitIndex : int;
     mutable lastApplied : int;
     mutable heartbeat : float;
@@ -41,9 +41,6 @@ let generate_heartbeat () =
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
-
-let ip_addr = ref (Unix.string_of_inet_addr (get_my_addr ()))
-let port_number = ref 0
 
 let serv_state = {
     id = "";
@@ -100,12 +97,10 @@ let rec id_from_oc cl oc =
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
-(* [nindex_from_id id li] takes a server id [id] and the matchIndexList [li] and
+(* [nindex_from_id id] takes a server id [id] and the nextIndexList and
  * finds the nextIndex of server [id] *)
-let rec nindex_from_id id li =
-    match li with
-    | [] -> None
-    | (i,ni)::t -> if i = id then Some ni else nindex_from_id id t
+let rec nindex_from_id id =
+    List.assoc id serv_state.nextIndexList
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -146,6 +141,19 @@ let update_neighbors ips id =
     serv_state.neighboringIPs <- ips;
     serv_state.id <- id
 
+let channels = ref []
+
+(* oc, rpc  *)
+let need_ae_res_from = ref []
+
+let listen_address = get_my_addr ()
+let port = 9000
+let backlog = 10
+
+let () = Lwt_log.add_rule "*" Lwt_log.Info
+
+let hb_interval = (Lwt_unix.sleep 1.)
+
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
@@ -158,6 +166,58 @@ let stringify_e (e:entry): string =
       "\"index\":" ^ (string_of_int e.index) ^
     "}"
   in json
+
+let nindex_from_id ip =
+    List.assoc ip serv_state.nextIndexList
+
+let req_append_entries (msg : append_entries_req) (ip : string) oc =
+    let entries = [] in
+    let next_index = nindex_from_id ip in
+    let entries =
+        let rec add_relevant es = function
+        | [] -> es
+        | (i, e)::t ->
+            if i >= next_index
+            then add_relevant (e::es) t
+            else add_relevant es t
+        in
+        add_relevant entries (List.rev serv_state.log)
+    in
+    let json =
+       "{" ^
+        "\"type\": \"appd_req\"," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" entries)
+        ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+
+(*
+
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ " *)
+
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{" ^
+        "\"type\":" ^ "\"appd_res\"" ^ "," ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+      "}"
+    in
+    send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
@@ -232,6 +292,9 @@ let process_conflicts entries =
     let n_log = iter_entries entries old_log in
     serv_state.log <- n_log
 
+(* [append_new_entries entries] adds the new entries to the log
+ * the entries must be in reverse chronological order as with the log
+ *)
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
     let rec append_new (entries: entry list):unit =
@@ -271,16 +334,13 @@ let rec send_heartbeat oc () =
  * if there is an inconsistency between the logs (aka the AERes success would be
  * false) *)
 let force_conform id =
-    match (nindex_from_id id serv_state.matchIndexList) with
-    | None -> failwith "should not be possible"
-    | Some ni ->
-        (* update the nextIndex for this server to be ni - 1 *)
-        (* TODO this is kinda duplicate code but idk how else to do it *)
-        let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
-        serv_state.nextIndexList <- (id, ni-1)::new_indices;
-        (* TODO do i retry the AEReq here? upon next client req? *)
-        ()
-
+    let ni = nindex_from_id id in
+    (* update the nextIndex for this server to be ni - 1 *)
+    (* TODO this is kinda duplicate code but idk how else to do it *)
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (id, ni-1)::new_indices;
+    (* TODO do i retry the AEReq here? upon next client req? *)
+    ()
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            MAIN SERVER FUNCTIONS
@@ -308,74 +368,6 @@ let read_neighboring_ips port_num =
   in
   process_file (Pervasives.open_in "ips.txt")
 
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
-(*
-
-    failwith
- "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
- listen for responses.
- - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"type\":" ^ "\"appd_res\"" ^ "," ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
-
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
-(*
-
-    failwith
- "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
- listen for responses.
- - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
 
 let req_request_vote ballot oc =
     let json =
@@ -484,7 +476,6 @@ and init_leader () =
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboringIPs;
     act_leader ();
-    Lwt.async(listen_for_client);
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -573,107 +564,6 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- *                                                                           *
- *                                                                           *
- * WEBSOCKET SHIT FROM THIS POINT UNTIL SERVER SHIT                          *
- *                                                                           *
- *                                                                           *
- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
-
-and handler
-    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
-    (req  : Cohttp_lwt_unix.Request.t)
-    (body : Cohttp_lwt_body.t) =
-  let open Frame in
-  Lwt_io.eprintf
-        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
-  >>= fun _ ->
-(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
-  print_endline headers; *)
-  let uri = Cohttp.Request.uri req in
-  match Uri.path uri with
-  | "/ws" ->
-    Lwt_io.eprintf "[PATH] \n%!"
-    >>= fun () ->
-    Cohttp_lwt_body.drain_body body
-    >>= fun () ->
-    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
-        fun f ->
-            match f.opcode with
-            | Frame.Opcode.Close ->
-                Printf.eprintf "[RECV] CLOSE\n%!"
-            | _ ->
-                (* do this shit here where u set append entries i guess *)
-                handle_client_msg f.content
-                Printf.eprintf "[RECV] %s\n%!" f.content
-    );
-    >>= fun (resp, body, frames_out_fn) ->
-    (* send a message to the client *)
-    let _ =
-            (* replace msg with latest value from server *)
-            let msg = Printf.sprintf "connected!" in
-            Lwt_io.eprintf "[SEND] %s\n%!" msg
-            >>= fun () ->
-            Lwt.wrap1 frames_out_fn @@
-                Some (Frame.create ~content:msg ())
-            >>= Lwt.return
-    in
-    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
-  | _ ->
-    Lwt_io.eprintf "[PATH] Catch-all\n%!"
-    >>= fun () ->
-    Cohttp_lwt_unix.Server.respond_string
-        ~status:`Not_found
-        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
-        ()
-
-and start_websocket host port () =
-  let conn_closed (ch,_) =
-    Printf.eprintf "[SERV] connection %s closed\n%!"
-      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
-  in
-  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
-  Cohttp_lwt_unix.Server.create
-    ~mode:(`TCP (`Port port))
-    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
-
-and listen_for_client () =
-    start_websocket !ip_addr (!port_number-1000) ()
-
-and handle_client_msg msg =
-    (* create the append_entries_rpc *)
-    (* using 0 to indicate no previous entry *)
-    let p_log_idx = get_p_log_idx in
-    let p_log_term = get_p_log_term in
-    let new_entry = {
-            value = msg |> member "value" |> to_int;
-            entryTerm = msg |> member "entryTerm" |> to_int;
-            index = msg |> member "index" |> to_int;
-        } in
-
-    let rpc = {
-        ap_term = serv_state.currentTerm;
-        leader_id = serv_state.id;
-        prev_log_index = p_log_idx ();
-        prev_log_term = p_log_term ();
-        entries = [];
-        leader_commit = serv_state.commitIndex;
-    } in
-
-    let old_log = serv_state.log in
-    let new_idx = (List.length old_log) + 1 in
-    serv_state.log <- (new_idx,new_entry)::old_log;
-    send_rpcs (req_append_entries rpc); ()
-
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- *                                                                           *
- *                                                                           *
- * END WEBSOCKET SHIT                                                        *
- *                                                                           *
- *                                                                           *
- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
-
 let rec id_from_oc cl oc =
     match cl with
     | [] -> None
@@ -750,15 +640,16 @@ let handle_ae_req msg oc =
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
+
     let responder_id = (
         match (id_from_oc !channels oc) with
         | None -> failwith "not possible"
         | Some x -> x
     ) in
-
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
+
     if (not success) then (force_conform responder_id);
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
@@ -840,6 +731,39 @@ let handle_message msg oc =
                         ()
                     end
     | "appd_res" -> ()
+    | "client" ->
+        (* TODO redirect client to Leader *)
+        if serv_state.role <> Leader then
+            (print_endline serv_state.leader_id; ())
+        else
+            (* create the append_entries_rpc *)
+            (* using 0 to indicate no previous entry *)
+            let p_log_idx = get_p_log_idx in
+            let p_log_term = get_p_log_term in
+            let new_entry = {
+                    value = msg |> member "value" |> to_int;
+                    entryTerm = msg |> member "entryTerm" |> to_int;
+                    index = msg |> member "index" |> to_int;
+                } in
+
+            let rpc = {
+                ap_term = serv_state.currentTerm;
+                leader_id = serv_state.id;
+                prev_log_index = p_log_idx ();
+                prev_log_term = p_log_term ();
+                entries = [];
+                leader_commit = serv_state.commitIndex;
+            } in
+
+            let old_log = serv_state.log in
+            let new_idx = (List.length old_log) + 1 in
+            serv_state.log <- (new_idx,new_entry)::old_log;
+            (*TODO iterate through channel list and send rpc*)
+            (*TODO find oc and get the entries to send*)
+
+            List.map (fun (ip, (_, oc)) -> req_append_entries rpc ip oc) !channels;
+
+            ()
     | _ -> ()
 
 
@@ -966,7 +890,6 @@ let create_server sock =
 
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
-    port_number := port_num;
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     print_endline "i finished";
@@ -975,12 +898,82 @@ let rec st port_num =
     print_endline "running";
     Lwt_main.run @@ serve ();;
 
-(* testing purposes, remove when complete *)
-let kek () = init_server ()
-
-(* testing purposes, remove when complete *)
-let ws () =
-    Lwt_main.run (start_websocket "localhost" 7777 ())
-
 let _ = Random.self_init()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * WEBSOCKET FOR A CLIENT IMPL                                               *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let handler
+    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+    (req  : Cohttp_lwt_unix.Request.t)
+    (body : Cohttp_lwt_body.t) =
+  let open Frame in
+  Lwt_io.eprintf
+        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  >>= fun _ ->
+(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
+  print_endline headers; *)
+  let uri = Cohttp.Request.uri req in
+  match Uri.path uri with
+  | "/" ->
+    Lwt_io.eprintf "[PATH] \n%!"
+    >>= fun () ->
+    Cohttp_lwt_body.drain_body body
+    >>= fun () ->
+    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+        fun f ->
+            match f.opcode with
+            | Frame.Opcode.Close ->
+                Printf.eprintf "[RECV] CLOSE\n%!"
+            | _ ->
+                (* do this shit here where u set append entries i guess *)
+                Printf.eprintf "[RECV] %s\n%!" f.content
+    );
+    >>= fun (resp, body, frames_out_fn) ->
+    (* send a message to the client *)
+    let _ =
+            (* replace msg with latest value from server *)
+            let msg = Printf.sprintf "connected!" in
+            Lwt_io.eprintf "[SEND] %s\n%!" msg
+            >>= fun () ->
+            Lwt.wrap1 frames_out_fn @@
+                Some (Frame.create ~content:msg ())
+            >>= Lwt.return
+    in
+    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
+  | _ ->
+    Lwt_io.eprintf "[PATH] Catch-all\n%!"
+    >>= fun () ->
+    Cohttp_lwt_unix.Server.respond_string
+        ~status:`Not_found
+        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
+        ()
+
+let start_websocket host port () =
+  read_neighboring_ips port;
+  establish_connections_to_others ();
+  let conn_closed (ch,_) =
+    Printf.eprintf "[SERV] connection %s closed\n%!"
+      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
+  in
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Cohttp_lwt_unix.Server.create
+    ~mode:(`TCP (`Port port))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+
+let start_client () =
+    start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * END WEBSOCKET SHIT                                                        *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
