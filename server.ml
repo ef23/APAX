@@ -533,8 +533,20 @@ let rec update_matchIndex oc =
     | None -> failwith "uh wtf"
     | Some id -> 
         (* basically rebuild the entire matchIndex list lol *)
-        let rec apply build li id = () in
-        ()
+        let rec apply build mi_list idx = 
+            match mi_list with 
+            | [] -> failwith "this should literally never happen lol kill me"
+            | (s,i)::t -> 
+                if s = idx then
+                    (* note: nextIndex - matchIndex > 1 if and only if a new
+                     * leader comes into power with a significantly larger log
+                     * which is a result of unifying a network partition, which
+                     * is NOT a feature that we support *)
+                    (let n_matchi = List.length serv_state.log in
+                    serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
+                else apply ((s,i)::build) t idx
+        in 
+        apply [] serv_state.matchIndexList id; ()
 
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
@@ -580,6 +592,8 @@ let handle_ae_res msg oc =
     let success = msg |> member "success" |> to_bool in
 
     handle_precheck current_term;
+
+    if success then update_matchIndex oc;
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
