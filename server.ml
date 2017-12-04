@@ -116,6 +116,7 @@ let update_neighbors ips id =
     serv_state.neighboringIPs <- ips;
     serv_state.id <- id
 
+(* (string * (ic * oc)) list *)
 let channels = ref []
 
 let listen_address = get_my_addr ()
@@ -510,6 +511,22 @@ and lose_election () =
 and terminate_election () =
     change_heartbeat ();
     start_election ()
+
+let rec id_from_oc cl oc = 
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
+let rec update_matchIndex oc = 
+    match (id_from_oc !channels oc) with
+    | None -> failwith "uh wtf"
+    | Some id -> 
+        (* basically rebuild the entire matchIndex list lol *)
+        let rec apply build li id = () in
+        ()
 
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
