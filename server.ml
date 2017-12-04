@@ -86,12 +86,10 @@ let rec id_from_oc cl oc =
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
-(* [nindex_from_id id li] takes a server id [id] and the matchIndexList [li] and
+(* [nindex_from_id id] takes a server id [id] and the nextIndexList and
  * finds the nextIndex of server [id] *)
-let rec nindex_from_id id li = 
-    match li with
-    | [] -> None
-    | (i,ni)::t -> if i = id then Some ni else nindex_from_id id t
+let rec nindex_from_id id = 
+    List.assoc id serv_state.nextIndexList
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -257,15 +255,13 @@ let rec send_heartbeat oc () =
  * if there is an inconsistency between the logs (aka the AERes success would be
  * false) *)
 let force_conform id = 
-    match (nindex_from_id id serv_state.matchIndexList) with
-    | None -> failwith "should not be possible"
-    | Some ni -> 
-        (* update the nextIndex for this server to be ni - 1 *)
-        (* TODO this is kinda duplicate code but idk how else to do it *)
-        let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
-        serv_state.nextIndexList <- (id, ni-1)::new_indices; 
-        (* TODO do i retry the AEReq here? upon next client req? *)
-        ()
+    let ni = nindex_from_id id in
+    (* update the nextIndex for this server to be ni - 1 *)
+    (* TODO this is kinda duplicate code but idk how else to do it *)
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (id, ni-1)::new_indices; 
+    (* TODO do i retry the AEReq here? upon next client req? *)
+    ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
 
