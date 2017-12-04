@@ -83,14 +83,11 @@ let full_addr_str port_num =
 
 let read_neighboring_ips port_num =
   let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
-  let port_regex = "\:[0-9]*" in
-  let port_regex = "[0-9]" in
   let rec process_file f_channel =
     try
       let line = Pervasives.input_line f_channel in
       let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
       let ip_str = Str.matched_string line in
-      let _ = Str.search_forward (Str.regexp port_regex) line 0 in
       let ip_len = String.length ip_str in
       let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
       let new_ip = (ip_str, port_int) in
@@ -609,11 +606,10 @@ let handle_client_as_leader msg =
     2. call req append entries"
 
 let update_output_channels oc msg =
-    let ip = msg |> member "ip" |> to_string in
-    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc = oc) !channels in
-    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc <> oc) !channels in
-    assert (List.length !channels = (List.length c_lst) + 1);
-    assert (ip <> "");
+    print_endline "as;flkajsd";
+    let ip = msg |> member "ip" |> to_string in print_endline "123";
+    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in print_endline "19208312";
+    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
     print_endline (ip^"EVERYTHING IS OK");
     channels := (ip, snd chans)::c_lst
 
@@ -702,6 +698,7 @@ let send_ip oc =
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
+
     List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
     print_endline "changed heart";
