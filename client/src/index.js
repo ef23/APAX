@@ -1,6 +1,6 @@
 import React from 'react';
 import ReactDOM from 'react-dom';
-import Websocket from 'ws';
+import 'ws';
 import './index.css';
 
 class App extends React.Component {
@@ -13,6 +13,7 @@ class App extends React.Component {
       ip_address: "",
       ip_page_msg: "",
       ws: "",
+      ws_page_msg: "",
     };
     this.updateText = this.updateText.bind(this);
     this.sendUpdate = this.sendUpdate.bind(this);
@@ -29,16 +30,20 @@ class App extends React.Component {
   }
 
   openWebsocket(ip) {
-    let wsURL = 'ws://' + ip + '/';
+    let wsURL = 'ws://' + ip + '/ws';
     try {
       this.ws = new WebSocket(wsURL);
     } catch (e) {
       this.failWebsocket();
     }
+    this.ws.onopen = (x) => {
+      console.log("opened!");
+    }
     this.ws.onerror = (x) => {
       this.failWebsocket();
     }
     this.ws.onmessage = (x) => {
+      console.log(x.data);
       this.setState({
         curr_val: x.data,
       });
@@ -66,7 +71,16 @@ class App extends React.Component {
     this.setState({
       box_text: ""
     });
-    this.ws.send(this.state.box_text);
+    try {
+      this.ws.send(this.state.box_text);
+      this.setState({
+        ws_page_msg: "Sent!"
+      });
+    } catch(e) {
+      this.setState({
+        ws_page_msg: "Error with sending message!"
+      });
+    }
   }
 
   render () {
@@ -74,6 +88,7 @@ class App extends React.Component {
       <div className = "text-center">
         <h1> APAX </h1>
         <h2> The current value is: {this.state.curr_val} </h2>
+        <p> {this.state.ws_page_msg} </p>
         <span>
           <input type="text" value={this.state.box_text} onChange={this.updateText.bind(this)}/>
           <button onClick={this.sendUpdate.bind(this)}> Update </button>
