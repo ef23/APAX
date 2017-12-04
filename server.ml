@@ -103,7 +103,7 @@ let read_neighboring_ips port_num =
     with
     | End_of_file -> Pervasives.close_in f_channel; ()
   in
-  process_file (Pervasives.open_in "ips")
+  process_file (Pervasives.open_in "ips.txt")
 
 let curr_role_thr = ref None
 
@@ -328,7 +328,7 @@ let res_request_vote msg oc =
  * [req_append_entries msg]
  * [req_request_vote msg] *)
 let rec send_rpcs f =
-    let lst_o = !channels in
+    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
     let rec send_to_ocs lst =
       match lst with
       | [] -> print_endline "sent all rpcs!"
@@ -352,7 +352,7 @@ let rec send_heartbeat oc () =
     Lwt.bind hb_interval (fun () -> send_heartbeat oc ())
 
 let send_heartbeats () =
-    let lst_o = !channels in
+    let lst_o = List.map (fun (ip, chans) -> chans) !channels in
     print_endline " fdsafds";
     let rec send_to_ocs lst =
       match lst with
@@ -623,10 +623,9 @@ let handle_message msg oc =
     | "vote_res" -> handle_vote_res msg; ()
     | "appd_req" -> begin
                         print_endline "received app";
+                        if serv_state.role = Candidate
+                        then ignore (lose_election ());
                         handle_ae_req msg oc;
-                        (* TODO: FIX BELOW LINE!! *)
-                        (* if serv_state.role = Candidate
-                        then lose_election (); *)
                         ()
                     end
     | "appd_res" -> ()
@@ -687,12 +686,14 @@ let rec handle_connection ic oc () =
 let init_server () =
     change_heartbeat ();
     print_endline "changed heart";
+    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
     print_endline "after list";
     init_follower ();
     print_endline "rigth before"
+
 
 let accept_connection conn =
    print_endline "accepted";
@@ -700,7 +701,8 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     let otherl = !channels in
-    channels := ((ic, oc)::otherl);
+    let ip = "" in (*TODO CHANGE CHANNELS*)
+    channels := ((ip, (ic, oc))::otherl);
     let iplistlen = List.length (serv_state.neighboringIPs) in
     if (List.length !channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
@@ -731,6 +733,7 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
+(*TODO update output channels*)
 let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
@@ -738,7 +741,8 @@ let main_client address portnum =
         print_endline (string_of_int (List.length (serv_state.neighboringIPs)));
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !channels in
-             channels := ((ic, oc)::otherl);
+             let ip = "" in
+             channels := ((ip, (ic, oc))::otherl);
              let iplistlen = List.length (serv_state.neighboringIPs) in
              if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
         Lwt_log.info "added connection" >>= return
