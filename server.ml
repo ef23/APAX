@@ -27,6 +27,7 @@ type state = {
     mutable nextIndexList : (string*int) list; (* id * next index *)
     mutable matchIndexList : (string*int) list; (* id * match index *)
     mutable received_heartbeat : bool;
+    mutable alive : bool;
 }
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
@@ -54,6 +55,7 @@ let serv_state = {
     nextIndexList = [];
     matchIndexList = [];
     received_heartbeat = false;
+    alive = true;
 }
 
 
@@ -336,20 +338,22 @@ let rec send_rpcs f =
     send_to_ocs lst_o
 
 let rec send_heartbeat oc () =
-    print_endline "fdsa";
-    let temp_str = "kek" in
-    Lwt_io.write_line oc (
-        "{" ^
-        "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
-        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
-        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
-        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": \"\"," ^
-        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
-        "}");
-    Lwt_io.flush oc;
-    Lwt.bind hb_interval (fun () -> send_heartbeat oc ())
+    print_endline "in send hearbteat";
+    if (serv_state.alive != false) then 
+        let temp_str = "kek" in
+        Lwt_io.write_line oc (
+            "{" ^
+            "\"type\":\"heartbeat\"," ^
+            "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+            "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
+            "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+            "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+            "\"entries\": \"\"," ^
+            "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
+            "}");
+        Lwt_io.flush oc;
+        Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
+
 
 let send_heartbeats () =
     let lst_o = List.map (fun (ip, chans) -> chans) !channels in
@@ -360,9 +364,10 @@ let send_heartbeats () =
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
-          Lwt.bind hb_interval (fun () -> send_heartbeat oc_in ())
+          Lwt.on_termination hb_interval (fun () -> send_heartbeat oc_in ())
           in
-          ignore (Thread.create start_timer oc); send_to_ocs t;
+          start_timer oc;
+          send_to_ocs t
         end
       | [] -> () in
     print_endline "number of ocs";
@@ -446,9 +451,9 @@ and act_candidate () =
         if serv_state.role = Candidate
         then begin
                 serv_state.votedFor <- None;
-                Lwt.bind hb_interval (fun () -> act_candidate ())
+                Lwt.on_termination hb_interval (fun () -> act_candidate ())
             end
-        else Lwt.return () in
+        (*else Lwt.return () *)in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
@@ -456,7 +461,7 @@ and act_candidate () =
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
     if (List.length serv_state.neighboringIPs)=1 then win_election ();
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -486,10 +491,8 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (act_follower);
-           (* Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ());*)
-            (*Thread.kill (Thread.self ())*)
-        end; ()
+            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (act_follower)
+        end
 
 and init_follower () =
     print_endline "init follower";
@@ -685,15 +688,11 @@ let rec handle_connection ic oc () =
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
     change_heartbeat ();
-    print_endline "changed heart";
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
         (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
-    print_endline "after list";
-    init_follower ();
-    print_endline "rigth before"
-
+    init_follower ()
 
 let accept_connection conn =
    print_endline "accepted";
