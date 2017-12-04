@@ -561,10 +561,14 @@ let handle_ae_res msg oc =
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
+
+    (* if we have a majority of followers allowing the commit, then commit *)
     if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* TODO commit to log *)
+
+        (* TODO need to keep sending the RPC to followers that have not yet responded *)
         ())
     else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
