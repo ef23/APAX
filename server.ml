@@ -6,6 +6,8 @@
 *          *)
 
 open Lwt
+open Websocket
+open Websocket_cohttp_lwt
 open Log
 open Request_vote_rpc
 open Append_entries_rpc
@@ -27,19 +29,21 @@ type state = {
     mutable nextIndexList : (string*int) list; (* id * next index *)
     mutable matchIndexList : (string*int) list; (* id * match index *)
     mutable received_heartbeat : bool;
-    mutable alive : bool;
 }
 
-(* the lower range of the elec tion timeout, in th is case 150-300ms*)
+(* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 5.50 in
-    let range = 4.00 in
+    let lower = 0.150 in
+    let range = 0.400 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
     timer
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+let ip_addr = ref (Unix.string_of_inet_addr (get_my_addr ()))
+let port_number = ref 0
 
 let serv_state = {
     id = "";
@@ -55,8 +59,59 @@ let serv_state = {
     nextIndexList = [];
     matchIndexList = [];
     received_heartbeat = false;
-    alive = true;
 }
+
+(* TODO this needs to be here and not elsewhere kek *)
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                           NON-STATE SERVER FIELDS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let curr_role_thr = ref None
+
+let vote_counter = ref 0
+let response_count = ref 0
+let success_count = ref 0
+
+let channels = ref []
+
+let listen_address = get_my_addr ()
+let port = 9000
+let backlog = 10
+
+let () = Lwt_log.add_rule "*" Lwt_log.Info
+
+let hb_interval = (Lwt_unix.sleep 1.)
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                            HELPER FUNCTIONS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+(* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
+ * finds the id corresponding to the channel [oc] *)
+let rec id_from_oc cl oc =
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [nindex_from_id id] takes a server id [id] and the nextIndexList and
+ * finds the nextIndex of server [id] *)
+let rec nindex_from_id id = 
+    List.assoc id serv_state.nextIndexList
+
+(* the lower range of the elec tion timeout, in th is case 150-300ms*)
+let generate_heartbeat () =
+    let lower = 1.50 in
+    let range = 4.00 in
+    let timer = (Random.float range) +. lower in
+    print_endline ("timer:"^(string_of_float timer));
+    timer
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
@@ -75,39 +130,11 @@ let get_p_log_term () =
     | None -> 0
     | Some e -> e.entryTerm
 
-
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let full_addr_str port_num =
     Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
-
-let read_neighboring_ips port_num =
-  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
-  let rec process_file f_channel =
-    try
-      let line = Pervasives.input_line f_channel in
-      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
-      let ip_str = Str.matched_string line in
-      let ip_len = String.length ip_str in
-      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
-      let new_ip = (ip_str, port_int) in
-      if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
-        let updated_ips = new_ip::serv_state.neighboringIPs in
-        serv_state.neighboringIPs <- updated_ips;
-      else
-        ();
-      process_file f_channel
-    with
-    | End_of_file -> Pervasives.close_in f_channel; ()
-  in
-  process_file (Pervasives.open_in "ips.txt")
-
-let curr_role_thr = ref None
-
-let vote_counter = ref 0
-let response_count = ref 0
-let success_count = ref 0
 
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
@@ -133,8 +160,6 @@ let hb_interval = (Lwt_unix.sleep 1.)
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
-
-(* LOG REPLICATIONS *)
 
 let stringify_e (e:entry): string =
   let json =
@@ -186,6 +211,17 @@ let json_es (entries:string): entry list =
     let ocaml_entries = List.map extract_record entries_str_lst in
     ocaml_entries
 
+(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
+let rec send_rpcs f =
+    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | [] -> print_endline "sent all rpcs!"
+      | (ic, oc)::t -> f oc; send_to_ocs t in
+    send_to_ocs lst_o
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
  * index [pli] with entry term [plt]; else false *)
@@ -249,6 +285,83 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
+let rec send_heartbeat oc () =
+    let temp_str = "kek" in
+    Lwt_io.write_line oc (
+        "{" ^
+        "\"type\":\"heartbeat\"," ^
+        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
+        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+        "\"entries\": \"\"," ^
+        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
+        "}");
+    Lwt_io.flush oc;
+    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+
+(* [force_conform id] forces server with id [id] to conform to the leader's log
+ * if there is an inconsistency between the logs (aka the AERes success would be
+ * false) *)
+let force_conform id = 
+    let ni = nindex_from_id id in
+    (* update the nextIndex for this server to be ni - 1 *)
+    (* TODO this is kinda duplicate code but idk how else to do it *)
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (id, ni-1)::new_indices; 
+    (* TODO do i retry the AEReq here? upon next client req? *)
+    ()
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                           MAIN SERVER FUNCTIONS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let read_neighboring_ips port_num =
+  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let rec process_file f_channel =
+    try
+      let line = Pervasives.input_line f_channel in
+      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
+      let ip_str = Str.matched_string line in
+      let ip_len = String.length ip_str in
+      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
+      let new_ip = (ip_str, port_int) in
+      if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
+        let updated_ips = new_ip::serv_state.neighboringIPs in
+        serv_state.neighboringIPs <- updated_ips;
+      else
+        ();
+      process_file f_channel
+    with
+    | End_of_file -> Pervasives.close_in f_channel; ()
+  in
+  process_file (Pervasives.open_in "ips.txt")
+
+let req_append_entries (msg : append_entries_req) oc =
+    let json =
+       "{" ^
+        "\"type\": \"appd_req\"," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+(*
+
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ " *)
+
 let req_append_entries (msg : append_entries_req) oc =
     let json =
        "{" ^
@@ -305,36 +418,6 @@ let res_request_vote msg oc =
          in send_msg json oc
     | None -> failwith "kek" *)
 
-(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
- * partially applied function [f], which is assumed to be one of the following:
- * [req_append_entries msg]
- * [req_request_vote msg] *)
-let rec send_rpcs f =
-    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
-    let rec send_to_ocs lst =
-      match lst with
-      | [] -> print_endline "sent all rpcs!"
-      | (ic, oc)::t -> f oc; send_to_ocs t in
-    send_to_ocs lst_o
-
-let rec send_heartbeat oc () =
-    print_endline "in send hearbteat";
-    if (serv_state.alive != false) then 
-        let temp_str = "kek" in
-        Lwt_io.write_line oc (
-            "{" ^
-            "\"type\":\"heartbeat\"," ^
-            "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
-            "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
-            "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
-            "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-            "\"entries\": \"\"," ^
-            "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
-            "}");
-        Lwt_io.flush oc;
-        Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
-
-
 let send_heartbeats () =
     let lst_o = List.map (fun (ip, chans) -> chans) !channels in
     print_endline " fdsafds";
@@ -344,10 +427,9 @@ let send_heartbeats () =
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
-          Lwt.on_termination hb_interval (fun () -> send_heartbeat oc_in ())
+          Lwt.bind hb_interval (fun () -> send_heartbeat oc_in ())
           in
-          start_timer oc;
-          send_to_ocs t
+          ignore (Thread.create start_timer oc); send_to_ocs t;
         end
       | [] -> () in
     print_endline "number of ocs";
@@ -413,6 +495,7 @@ and init_leader () =
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboringIPs;
     act_leader ();
+    Lwt.async(listen_for_client);
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -431,17 +514,18 @@ and act_candidate () =
         if serv_state.role = Candidate
         then begin
                 serv_state.votedFor <- None;
-                Lwt.on_termination hb_interval (fun () -> act_candidate ())
+                Lwt.bind hb_interval (fun () -> act_candidate ())
             end
-        (*else Lwt.return () *)in
+        else Lwt.return () in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    if (List.length serv_state.neighboringIPs)=1 then win_election ();
-    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
+    print_endline (string_of_int (List.length serv_state.neighboringIPs));
+    if (List.length serv_state.neighboringIPs)<=1 then win_election ();
+    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -471,12 +555,12 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (act_follower)
+            Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
         end
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
+    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -499,6 +583,107 @@ and lose_election () =
 and terminate_election () =
     change_heartbeat ();
     start_election ()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * WEBSOCKET SHIT FROM THIS POINT UNTIL SERVER SHIT                          *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+and handler
+    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+    (req  : Cohttp_lwt_unix.Request.t)
+    (body : Cohttp_lwt_body.t) =
+  let open Frame in
+  Lwt_io.eprintf
+        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  >>= fun _ ->
+(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
+  print_endline headers; *)
+  let uri = Cohttp.Request.uri req in
+  match Uri.path uri with
+  | "/ws" ->
+    Lwt_io.eprintf "[PATH] \n%!"
+    >>= fun () ->
+    Cohttp_lwt_body.drain_body body
+    >>= fun () ->
+    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+        fun f ->
+            match f.opcode with
+            | Frame.Opcode.Close ->
+                Printf.eprintf "[RECV] CLOSE\n%!"
+            | _ ->
+                (* do this shit here where u set append entries i guess *)
+                Printf.eprintf "[RECV] %s\n%!" f.content
+    );
+    >>= fun (resp, body, frames_out_fn) ->
+    (* send a message to the client *)
+    let _ =
+            (* replace msg with latest value from server *)
+            let msg = Printf.sprintf "connected!" in
+            Lwt_io.eprintf "[SEND] %s\n%!" msg
+            >>= fun () ->
+            Lwt.wrap1 frames_out_fn @@
+                Some (Frame.create ~content:msg ())
+            >>= Lwt.return
+    in
+    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
+  | _ ->
+    Lwt_io.eprintf "[PATH] Catch-all\n%!"
+    >>= fun () ->
+    Cohttp_lwt_unix.Server.respond_string
+        ~status:`Not_found
+        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
+        ()
+
+and start_websocket host port () =
+  let conn_closed (ch,_) =
+    Printf.eprintf "[SERV] connection %s closed\n%!"
+      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
+  in
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Cohttp_lwt_unix.Server.create
+    ~mode:(`TCP (`Port port))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+
+and listen_for_client () =
+    start_websocket !ip_addr (!port_number-1000) ()
+
+let rec id_from_oc cl oc =
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
+let rec update_match_index oc =
+    match (id_from_oc !channels oc) with
+    | None -> failwith "uh wtf"
+    | Some id ->
+        (* basically rebuild the entire matchIndex list lol *)
+        let rec apply build mi_list idx =
+            match mi_list with
+            | [] -> failwith "this should literally never happen lol kill me"
+            | (s,i)::t ->
+                if s = idx then
+                    (* note: nextIndex - matchIndex > 1 if and only if a new
+                     * leader comes into power with a significantly larger log
+                     * which is a result of unifying a network partition, which
+                     * is NOT a feature that we support *)
+                    (let n_matchi = List.length serv_state.log in
+                    serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
+                else apply ((s,i)::build) t idx
+        in
+        apply [] serv_state.matchIndexList id; ()
+
+(* [update_next_index ] is only used by the leader *)
+let update_next_index oc =
+    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (ip, List.length serv_state.log)::new_indices
 
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
@@ -542,8 +727,16 @@ let handle_ae_req msg oc =
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
+
+    let responder_id = (
+        match (id_from_oc !channels oc) with
+        | None -> failwith "not possible"
+        | Some x -> x
+    ) in
     handle_precheck current_term;
 
+    if success then (update_match_index oc; update_next_index oc;);
+    if (not success) then (force_conform responder_id);
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -605,8 +798,6 @@ let update_output_channels oc msg =
     print_endline (ip^"EVERYTHING IS OK");
     channels := (ip, snd chans)::c_lst
 
-    (*remove oc and then add ip, oc*)
-
 let handle_message msg oc =
     print_endline ("here:"^msg);
     serv_state.received_heartbeat <- true;
@@ -665,7 +856,6 @@ let handle_message msg oc =
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
     (fun (msg) ->
@@ -692,6 +882,7 @@ let init_server () =
 
     List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
+    print_endline "changed heart";
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
@@ -738,8 +929,6 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
-
-
 let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
@@ -778,8 +967,10 @@ let create_server sock =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
+
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
+    port_number := port_num;
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     print_endline "i finished";
@@ -788,8 +979,12 @@ let rec st port_num =
     print_endline "running";
     Lwt_main.run @@ serve ();;
 
+(* testing purposes, remove when complete *)
 let kek () = init_server ()
 
+(* testing purposes, remove when complete *)
+let ws () =
+    Lwt_main.run (start_websocket "localhost" 7777 ())
+
 let _ = Random.self_init()
-    (* any more scheduled tasks will run after this *)
 
