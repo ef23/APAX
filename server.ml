@@ -132,7 +132,7 @@ let send_msg str oc =
 
 (* LOG REPLICATIONS *)
 
-let stringify_entry (e:entry): string =
+let stringify_e (e:entry): string =
   let json =
     "{" ^
       "\"value\":" ^ (string_of_int e.value) ^ "," ^
@@ -150,7 +150,8 @@ let req_append_entries (msg : append_entries_req) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
@@ -266,7 +267,8 @@ let req_append_entries (msg : append_entries_req) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
@@ -611,8 +613,8 @@ let handle_client_as_leader msg =
 
 let update_output_channels oc msg =
     print_endline "as;flkajsd";
-    let ip = msg |> member "ip" |> to_string in print_endline "123";
-    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in print_endline "19208312";
+    let ip = msg |> member "ip" |> to_string in
+    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in
     let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
     print_endline (ip^"EVERYTHING IS OK");
     channels := (ip, snd chans)::c_lst
@@ -625,7 +627,7 @@ let handle_message msg oc =
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
-    | "oc" -> print_endline "MUSDHFUHSFUHDSF"; update_output_channels oc msg; ()
+    | "oc" -> update_output_channels oc msg; ()
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
