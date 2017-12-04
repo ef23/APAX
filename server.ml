@@ -6,6 +6,8 @@
 *          *)
 
 open Lwt
+open Websocket
+open Websocket_cohttp_lwt
 open Log
 open Request_vote_rpc
 open Append_entries_rpc
@@ -774,6 +776,74 @@ let rec st port_num =
 
 let kek () = init_server ()
 
+let handler
+    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+    (req  : Cohttp_lwt_unix.Request.t)
+    (body : Cohttp_lwt_body.t) =
+  let open Frame in
+  Lwt_io.eprintf
+        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  >>= fun _ ->
+  let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
+  print_endline headers;
+  let uri = Cohttp.Request.uri req in
+  match Uri.path uri with
+  | "/" ->
+    Lwt_io.eprintf "[PATH] \n%!"
+    >>= fun () ->
+    Cohttp_lwt_body.drain_body body
+    >>= fun () ->
+    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+        fun f ->
+            match f.opcode with
+            | Frame.Opcode.Close ->
+                Printf.eprintf "[RECV] CLOSE\n%!"
+            | _ ->
+                Printf.eprintf "[RECV] %s\n%!" f.content
+    );
+    >>= fun (resp, body, frames_out_fn) -> print_endline "here";
+    (* send a message to the client every second *)
+    let _ =
+        let num_ref = ref 10 in
+        let rec go () =
+            if !num_ref > 0 then
+                let msg = Printf.sprintf "-> Ping %d" !num_ref in
+                Lwt_io.eprintf "[SEND] %s\n%!" msg
+                >>= fun () ->
+                Lwt.wrap1 frames_out_fn @@
+                    Some (Frame.create ~content:msg ())
+                >>= fun () ->
+                Lwt.return (num_ref := !num_ref - 1)
+                >>= fun () ->
+                Lwt_unix.sleep 1.
+                >>= go
+            else
+                Lwt_io.eprintf "[INFO] Test done\n%!"
+                >>= Lwt.return
+        in
+        go ()
+    in
+    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
+  | _ ->
+    Lwt_io.eprintf "[PATH] Catch-all\n%!"
+    >>= fun () ->
+    Cohttp_lwt_unix.Server.respond_string
+        ~status:`Not_found
+        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
+        ()
+
+let start_server host port () =
+  let conn_closed (ch,_) =
+    Printf.eprintf "[SERV] connection %s closed\n%!"
+      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
+  in
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Cohttp_lwt_unix.Server.create
+    ~mode:(`TCP (`Port port))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+
+let ws () =
+    Lwt_main.run (start_server "localhost" 7777 ())
+
 let _ = Random.self_init()
-    (* any more scheduled tasks will run after this *)
 
