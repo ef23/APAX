@@ -552,12 +552,20 @@ let handle_ae_req msg oc =
 
     (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
+(* [update_next_index ] is only used by the leader *)
+let update_next_index success oc =
+    if success then
+    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.nextIndexList in
+    let (_, old_ind) = List.find (fun (lst_ip, _) -> lst_ip = ip) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (ip, old_ind + 1)::new_indices
+
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
 
     handle_precheck current_term;
-
+    update_next_index success oc;
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
