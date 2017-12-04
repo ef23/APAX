@@ -31,10 +31,10 @@ type state = {
     mutable received_heartbeat : bool;
 }
 
-(* the lower range of the elec tion timeout, in th is case 150-300ms*)
+(* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 1.50 in
-    let range = 4.00 in
+    let lower = 0.150 in
+    let range = 0.400 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
     timer
@@ -61,6 +61,59 @@ let serv_state = {
     received_heartbeat = false;
 }
 
+(* TODO this needs to be here and not elsewhere kek *)
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                           NON-STATE SERVER FIELDS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let curr_role_thr = ref None
+
+let vote_counter = ref 0
+let response_count = ref 0
+let success_count = ref 0
+
+let channels = ref []
+
+let listen_address = get_my_addr ()
+let port = 9000
+let backlog = 10
+
+let () = Lwt_log.add_rule "*" Lwt_log.Info
+
+let hb_interval = (Lwt_unix.sleep 1.)
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                            UTILITY FUNCTIONS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+(* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
+ * finds the id corresponding to the channel [oc] *)
+let rec id_from_oc cl oc =
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [nindex_from_id id li] takes a server id [id] and the matchIndexList [li] and
+ * finds the nextIndex of server [id] *)
+let rec nindex_from_id id li =
+    match li with
+    | [] -> None
+    | (i,ni)::t -> if i = id then Some ni else nindex_from_id id t
+
+(* the lower range of the elec tion timeout, in th is case 150-300ms*)
+let generate_heartbeat () =
+    let lower = 1.50 in
+    let range = 4.00 in
+    let timer = (Random.float range) +. lower in
+    print_endline ("timer:"^(string_of_float timer));
+    timer
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
@@ -79,39 +132,11 @@ let get_p_log_term () =
     | None -> 0
     | Some e -> e.entryTerm
 
-
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let full_addr_str port_num =
     Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
-
-let read_neighboring_ips port_num =
-  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
-  let rec process_file f_channel =
-    try
-      let line = Pervasives.input_line f_channel in
-      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
-      let ip_str = Str.matched_string line in
-      let ip_len = String.length ip_str in
-      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
-      let new_ip = (ip_str, port_int) in
-      if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
-        let updated_ips = new_ip::serv_state.neighboringIPs in
-        serv_state.neighboringIPs <- updated_ips;
-      else
-        ();
-      process_file f_channel
-    with
-    | End_of_file -> Pervasives.close_in f_channel; ()
-  in
-  process_file (Pervasives.open_in "ips.txt")
-
-let curr_role_thr = ref None
-
-let vote_counter = ref 0
-let response_count = ref 0
-let success_count = ref 0
 
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
@@ -121,21 +146,9 @@ let update_neighbors ips id =
     serv_state.neighboringIPs <- ips;
     serv_state.id <- id
 
-let channels = ref []
-
-let listen_address = get_my_addr ()
-let port = 9000
-let backlog = 10
-
-let () = Lwt_log.add_rule "*" Lwt_log.Info
-
-let hb_interval = (Lwt_unix.sleep 1.)
-
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
-
-(* LOG REPLICATIONS *)
 
 let stringify_e (e:entry): string =
   let json =
@@ -145,41 +158,6 @@ let stringify_e (e:entry): string =
       "\"index\":" ^ (string_of_int e.index) ^
     "}"
   in json
-
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
-(*
-
-    failwith
- "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
- listen for responses.
- - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"type\":" ^ "\"appd_res\"" ^ "," ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
@@ -200,6 +178,17 @@ let json_es (entries:string): entry list =
     let ocaml_entries = List.map extract_record entries_str_lst in
     ocaml_entries
 
+(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
+ * [req_append_entries msg]
+ * [req_request_vote msg] *)
+let rec send_rpcs f =
+    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | [] -> print_endline "sent all rpcs!"
+      | (ic, oc)::t -> f oc; send_to_ocs t in
+    send_to_ocs lst_o
 
 (* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
  * index [pli] with entry term [plt]; else false *)
@@ -262,6 +251,83 @@ let rec append_new_entries (entries : entry list) : unit =
             end
     in
     append_new entries
+
+let rec send_heartbeat oc () =
+    let temp_str = "kek" in
+    Lwt_io.write_line oc (
+        "{" ^
+        "\"type\":\"heartbeat\"," ^
+        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
+        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+        "\"entries\": \"\"," ^
+        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
+        "}");
+    Lwt_io.flush oc;
+    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
+                           MAIN SERVER FUNCTIONS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let read_neighboring_ips port_num =
+  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let rec process_file f_channel =
+    try
+      let line = Pervasives.input_line f_channel in
+      let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
+      let ip_str = Str.matched_string line in
+      let ip_len = String.length ip_str in
+      let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
+      let new_ip = (ip_str, port_int) in
+      if new_ip <> ( Unix.string_of_inet_addr (get_my_addr ()), port_num) then
+        let updated_ips = new_ip::serv_state.neighboringIPs in
+        serv_state.neighboringIPs <- updated_ips;
+      else
+        ();
+      process_file f_channel
+    with
+    | End_of_file -> Pervasives.close_in f_channel; ()
+  in
+  process_file (Pervasives.open_in "ips.txt")
+
+let req_append_entries (msg : append_entries_req) oc =
+    let json =
+       "{" ^
+        "\"type\": \"appd_req\"," ^
+        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+        "\"entries\":" ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
+        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+      "}"
+    in send_msg json oc
+(*
+
+    failwith
+ "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
+ listen for responses.
+ - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
+ - then when majority, incr commit index
+
+ " *)
+
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
+let res_append_entries (ae_res:append_entries_res) oc =
+    let json =
+      "{" ^
+        "\"type\":" ^ "\"appd_res\"" ^ "," ^
+        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
+      "}"
+    in send_msg json oc
 
 let req_append_entries (msg : append_entries_req) oc =
     let json =
@@ -326,33 +392,6 @@ let res_request_vote msg oc =
           "{\"current_term\": " ^ (string_of_int serv_state.currentTerm) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     | None -> failwith "kek" *)
-
-(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
- * partially applied function [f], which is assumed to be one of the following:
- * [req_append_entries msg]
- * [req_request_vote msg] *)
-let rec send_rpcs f =
-    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
-    let rec send_to_ocs lst =
-      match lst with
-      | [] -> print_endline "sent all rpcs!"
-      | (ic, oc)::t -> f oc; send_to_ocs t in
-    send_to_ocs lst_o
-
-let rec send_heartbeat oc () =
-    let temp_str = "kek" in
-    Lwt_io.write_line oc (
-        "{" ^
-        "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
-        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
-        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
-        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": \"\"," ^
-        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
-        "}");
-    Lwt_io.flush oc;
-    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
 
 let send_heartbeats () =
     let lst_o = List.map (fun (ip, chans) -> chans) !channels in
@@ -427,11 +466,11 @@ and init_leader () =
             build_match_index nbuild t in
 
     print_endline "init leader";
-    Lwt.async(listen_for_client);
     build_match_index [] serv_state.neighboringIPs;
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboringIPs;
     act_leader ();
+    Lwt.async(listen_for_client);
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -731,6 +770,14 @@ let update_output_channels oc msg =
 
     (*remove oc and then add ip, oc*)
 
+(* [force_conform id] forces server with id [id] to conform to the leader's log
+ * if there is an inconsistency between the logs (aka the AERes success would be
+ * false) *)
+(* let force_conform id =
+    match (nindex_from_id id !serv_state.matchIndexList) with
+    | None -> failwith "should not be possible"
+    | Some ni -> () *)
+
 let handle_message msg oc =
     print_endline ("here:"^msg);
     serv_state.received_heartbeat <- true;
@@ -789,7 +836,6 @@ let handle_message msg oc =
  *                                                                           *
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
-
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -863,8 +909,6 @@ let create_socket portnum () =
     bind sock @@ ADDR_INET(listen_address, portnum);
     listen sock backlog;
     sock
-
-
 
 let main_client address portnum =
     try
