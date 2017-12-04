@@ -472,7 +472,7 @@ and init_leader () =
     print_endline "init leader";
     build_match_index [] serv_state.neighboringIPs;
     let n_idx = (get_p_log_idx ()) + 1 in
-    build_next_index [] serv_state.neighboringIPs;
+    build_next_index [] serv_state.neighboringIPs n_idx;
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
