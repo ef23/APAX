@@ -31,6 +31,20 @@ type state = {
     mutable received_heartbeat : bool;
 }
 
+(* the lower range of the election timeout, in th is case 150-300ms*)
+let generate_heartbeat () =
+    let lower = 0.150 in
+    let range = 0.400 in
+    let timer = (Random.float range) +. lower in
+    print_endline ("timer:"^(string_of_float timer));
+    timer
+
+let get_my_addr () =
+    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+
+let ip_addr = ref (Unix.string_of_inet_addr (get_my_addr ()))
+let port_number = ref 0
+
 let serv_state = {
     id = "";
     leader_id = "";
@@ -51,7 +65,7 @@ let serv_state = {
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            NON-STATE SERVER FIELDS
 
@@ -73,7 +87,7 @@ let () = Lwt_log.add_rule "*" Lwt_log.Info
 
 let hb_interval = (Lwt_unix.sleep 1.)
 
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                             HELPER FUNCTIONS
 
@@ -81,7 +95,7 @@ let hb_interval = (Lwt_unix.sleep 1.)
 
 (* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
  * finds the id corresponding to the channel [oc] *)
-let rec id_from_oc cl oc = 
+let rec id_from_oc cl oc =
     match cl with
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
@@ -262,8 +276,7 @@ let force_conform id =
     serv_state.nextIndexList <- (id, ni-1)::new_indices; 
     (* TODO do i retry the AEReq here? upon next client req? *)
     ()
-
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * 
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            MAIN SERVER FUNCTIONS
 
@@ -466,6 +479,7 @@ and init_leader () =
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboringIPs;
     act_leader ();
+    Lwt.async(listen_for_client);
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -493,7 +507,8 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    if (List.length serv_state.neighboringIPs)=1 then win_election ();
+    print_endline (string_of_int (List.length serv_state.neighboringIPs));
+    if (List.length serv_state.neighboringIPs)<=1 then win_election ();
     Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
@@ -553,18 +568,90 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * WEBSOCKET SHIT FROM THIS POINT UNTIL SERVER SHIT                          *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+and handler
+    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+    (req  : Cohttp_lwt_unix.Request.t)
+    (body : Cohttp_lwt_body.t) =
+  let open Frame in
+  Lwt_io.eprintf
+        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  >>= fun _ ->
+(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
+  print_endline headers; *)
+  let uri = Cohttp.Request.uri req in
+  match Uri.path uri with
+  | "/ws" ->
+    Lwt_io.eprintf "[PATH] \n%!"
+    >>= fun () ->
+    Cohttp_lwt_body.drain_body body
+    >>= fun () ->
+    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+        fun f ->
+            match f.opcode with
+            | Frame.Opcode.Close ->
+                Printf.eprintf "[RECV] CLOSE\n%!"
+            | _ ->
+                (* do this shit here where u set append entries i guess *)
+                Printf.eprintf "[RECV] %s\n%!" f.content
+    );
+    >>= fun (resp, body, frames_out_fn) ->
+    (* send a message to the client *)
+    let _ =
+            (* replace msg with latest value from server *)
+            let msg = Printf.sprintf "connected!" in
+            Lwt_io.eprintf "[SEND] %s\n%!" msg
+            >>= fun () ->
+            Lwt.wrap1 frames_out_fn @@
+                Some (Frame.create ~content:msg ())
+            >>= Lwt.return
+    in
+    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
+  | _ ->
+    Lwt_io.eprintf "[PATH] Catch-all\n%!"
+    >>= fun () ->
+    Cohttp_lwt_unix.Server.respond_string
+        ~status:`Not_found
+        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
+        ()
+
+and start_websocket host port () =
+  let conn_closed (ch,_) =
+    Printf.eprintf "[SERV] connection %s closed\n%!"
+      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
+  in
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Cohttp_lwt_unix.Server.create
+    ~mode:(`TCP (`Port port))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+
+and listen_for_client () =
+    start_websocket !ip_addr (!port_number-1000) ()
+
+let rec id_from_oc cl oc =
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
  * updates its matchIndex in this server's matchIndex list
  * -requires the server of [oc] to have responded to an AEReq with true *)
-let rec update_match_index oc = 
+let rec update_match_index oc =
     match (id_from_oc !channels oc) with
     | None -> failwith "uh wtf"
-    | Some id -> 
+    | Some id ->
         (* basically rebuild the entire matchIndex list lol *)
-        let rec apply build mi_list idx = 
-            match mi_list with 
+        let rec apply build mi_list idx =
+            match mi_list with
             | [] -> failwith "this should literally never happen lol kill me"
-            | (s,i)::t -> 
+            | (s,i)::t ->
                 if s = idx then
                     (* note: nextIndex - matchIndex > 1 if and only if a new
                      * leader comes into power with a significantly larger log
@@ -573,7 +660,7 @@ let rec update_match_index oc =
                     (let n_matchi = List.length serv_state.log in
                     serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
                 else apply ((s,i)::build) t idx
-        in 
+        in
         apply [] serv_state.matchIndexList id; ()
 
 (* [update_next_index ] is only used by the leader *)
@@ -625,7 +712,7 @@ let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
     let responder_id = (
-        match (id_from_oc !channels oc) with 
+        match (id_from_oc !channels oc) with
         | None -> failwith "not possible"
         | Some x -> x
     ) in
@@ -633,9 +720,7 @@ let handle_ae_res msg oc =
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
-
     if (not success) then (force_conform responder_id);
-    
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -696,8 +781,6 @@ let update_output_channels oc msg =
     let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
     print_endline (ip^"EVERYTHING IS OK");
     channels := (ip, snd chans)::c_lst
-
-    (*remove oc and then add ip, oc*)
 
 let handle_message msg oc =
     print_endline ("here:"^msg);
@@ -869,8 +952,10 @@ let create_server sock =
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
 
+
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
+    port_number := port_num;
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     print_endline "i finished";
@@ -879,76 +964,12 @@ let rec st port_num =
     print_endline "running";
     Lwt_main.run @@ serve ();;
 
+(* testing purposes, remove when complete *)
 let kek () = init_server ()
 
-let handler
-    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
-    (req  : Cohttp_lwt_unix.Request.t)
-    (body : Cohttp_lwt_body.t) =
-  let open Frame in
-  Lwt_io.eprintf
-        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
-  >>= fun _ ->
-  let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
-  print_endline headers;
-  let uri = Cohttp.Request.uri req in
-  match Uri.path uri with
-  | "/" ->
-    Lwt_io.eprintf "[PATH] \n%!"
-    >>= fun () ->
-    Cohttp_lwt_body.drain_body body
-    >>= fun () ->
-    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
-        fun f ->
-            match f.opcode with
-            | Frame.Opcode.Close ->
-                Printf.eprintf "[RECV] CLOSE\n%!"
-            | _ ->
-                Printf.eprintf "[RECV] %s\n%!" f.content
-    );
-    >>= fun (resp, body, frames_out_fn) -> print_endline "here";
-    (* send a message to the client every second *)
-    let _ =
-        let num_ref = ref 10 in
-        let rec go () =
-            if !num_ref > 0 then
-                let msg = Printf.sprintf "-> Ping %d" !num_ref in
-                Lwt_io.eprintf "[SEND] %s\n%!" msg
-                >>= fun () ->
-                Lwt.wrap1 frames_out_fn @@
-                    Some (Frame.create ~content:msg ())
-                >>= fun () ->
-                Lwt.return (num_ref := !num_ref - 1)
-                >>= fun () ->
-                Lwt_unix.sleep 1.
-                >>= go
-            else
-                Lwt_io.eprintf "[INFO] Test done\n%!"
-                >>= Lwt.return
-        in
-        go ()
-    in
-    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
-  | _ ->
-    Lwt_io.eprintf "[PATH] Catch-all\n%!"
-    >>= fun () ->
-    Cohttp_lwt_unix.Server.respond_string
-        ~status:`Not_found
-        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
-        ()
-
-let start_server host port () =
-  let conn_closed (ch,_) =
-    Printf.eprintf "[SERV] connection %s closed\n%!"
-      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
-  in
-  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
-  Cohttp_lwt_unix.Server.create
-    ~mode:(`TCP (`Port port))
-    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
-
+(* testing purposes, remove when complete *)
 let ws () =
-    Lwt_main.run (start_server "localhost" 7777 ())
+    Lwt_main.run (start_websocket "localhost" 7777 ())
 
 let _ = Random.self_init()
 
