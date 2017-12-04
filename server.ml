@@ -608,12 +608,24 @@ let handle_client_as_leader msg =
      (leader's current term & list.length for index)
     2. call req append entries"
 
+let update_output_channels oc msg =
+    let ip = msg |> member "ip" |> to_string in
+    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc = oc) !channels in
+    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc <> oc) !channels in
+    assert (List.length !channels = (List.length c_lst) + 1);
+    assert (ip <> "");
+    print_endline (ip^"EVERYTHING IS OK");
+    channels := (ip, snd chans)::c_lst
+
+    (*remove oc and then add ip, oc*)
+
 let handle_message msg oc =
     print_endline ("here:"^msg);
     serv_state.received_heartbeat <- true;
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
+    | "oc" -> print_endline "MUSDHFUHSFUHDSF"; update_output_channels oc msg; ()
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
@@ -677,10 +689,20 @@ let rec handle_connection ic oc () =
             (handle_connection ic oc) ();
         | None -> begin Lwt_log.info "Connection closed." >>= return end)
 
+let send_ip oc =
+    let json =
+    "{" ^
+        "\"type\": \"oc\"," ^
+        "\"ip\": \"" ^ serv_state.id ^ "\"" ^
+    "}"
+    in
+    send_msg json oc
+
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
+    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
     print_endline "changed heart";
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
@@ -691,14 +713,13 @@ let init_server () =
     init_follower ();
     print_endline "rigth before"
 
-
 let accept_connection conn =
    print_endline "accepted";
     let fd, _ = conn in
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     let otherl = !channels in
-    let ip = "" in (*TODO CHANGE CHANNELS*)
+    let ip = "" in
     channels := ((ip, (ic, oc))::otherl);
     let iplistlen = List.length (serv_state.neighboringIPs) in
     if (List.length !channels)=iplistlen then init_server ();
@@ -730,7 +751,8 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
-(*TODO update output channels*)
+
+
 let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
@@ -741,7 +763,9 @@ let main_client address portnum =
              let ip = "" in
              channels := ((ip, (ic, oc))::otherl);
              let iplistlen = List.length (serv_state.neighboringIPs) in
+
              if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
+
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
