@@ -457,8 +457,6 @@ and act_leader () =
     print_endline "act leader";
     act_all();
     send_heartbeats (); ()
-    (* LOG REPLICATIONS *)
-    (* TODO listen for client req and send appd_entries *)
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
@@ -699,14 +697,13 @@ let handle_ae_req msg oc =
         success = success_bool;
         current_term = serv_state.currentTerm;
     } in
+    (* TODO do we still process conflicts and append new entries if success = false???? *)
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
     if leader_commit > serv_state.commitIndex then
         (let new_commit = min leader_commit (get_p_log_idx ()) in
         serv_state.commitIndex <- new_commit); (* 5 *)
     res_append_entries ae_res oc
-
-    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
