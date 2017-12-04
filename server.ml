@@ -31,7 +31,7 @@ type state = {
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 1.50 in
+    let lower = 5.50 in
     let range = 4.00 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
@@ -336,6 +336,7 @@ let rec send_rpcs f =
     send_to_ocs lst_o
 
 let rec send_heartbeat oc () =
+    print_endline "fdsa";
     let temp_str = "kek" in
     Lwt_io.write_line oc (
         "{" ^
@@ -348,7 +349,7 @@ let rec send_heartbeat oc () =
         "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
         "}");
     Lwt_io.flush oc;
-    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+    Lwt.bind hb_interval (fun () -> send_heartbeat oc ())
 
 let send_heartbeats () =
     let lst_o = !channels in
@@ -485,12 +486,14 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
-        end
+            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (act_follower);
+           (* Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ());*)
+            (*Thread.kill (Thread.self ())*)
+        end; ()
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
