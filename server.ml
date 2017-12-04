@@ -42,9 +42,6 @@ let generate_heartbeat () =
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
-let ip_addr = ref (Unix.string_of_inet_addr (get_my_addr ()))
-let port_number = ref 0
-
 let serv_state = {
     id = "";
     leader_id = "";
@@ -479,7 +476,6 @@ and init_leader () =
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboringIPs;
     act_leader ();
-    Lwt.async(listen_for_client);
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
  * vote requests and ending an election as a winner/loser/stall
@@ -568,73 +564,6 @@ and lose_election () =
 and terminate_election () =
     change_heartbeat ();
     start_election ()
-
-(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
- *                                                                           *
- *                                                                           *
- * WEBSOCKET SHIT FROM THIS POINT UNTIL SERVER SHIT                          *
- *                                                                           *
- *                                                                           *
- * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
-
-and handler
-    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
-    (req  : Cohttp_lwt_unix.Request.t)
-    (body : Cohttp_lwt_body.t) =
-  let open Frame in
-  Lwt_io.eprintf
-        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
-  >>= fun _ ->
-(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
-  print_endline headers; *)
-  let uri = Cohttp.Request.uri req in
-  match Uri.path uri with
-  | "/ws" ->
-    Lwt_io.eprintf "[PATH] \n%!"
-    >>= fun () ->
-    Cohttp_lwt_body.drain_body body
-    >>= fun () ->
-    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
-        fun f ->
-            match f.opcode with
-            | Frame.Opcode.Close ->
-                Printf.eprintf "[RECV] CLOSE\n%!"
-            | _ ->
-                (* do this shit here where u set append entries i guess *)
-                Printf.eprintf "[RECV] %s\n%!" f.content
-    );
-    >>= fun (resp, body, frames_out_fn) ->
-    (* send a message to the client *)
-    let _ =
-            (* replace msg with latest value from server *)
-            let msg = Printf.sprintf "connected!" in
-            Lwt_io.eprintf "[SEND] %s\n%!" msg
-            >>= fun () ->
-            Lwt.wrap1 frames_out_fn @@
-                Some (Frame.create ~content:msg ())
-            >>= Lwt.return
-    in
-    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
-  | _ ->
-    Lwt_io.eprintf "[PATH] Catch-all\n%!"
-    >>= fun () ->
-    Cohttp_lwt_unix.Server.respond_string
-        ~status:`Not_found
-        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
-        ()
-
-and start_websocket host port () =
-  let conn_closed (ch,_) =
-    Printf.eprintf "[SERV] connection %s closed\n%!"
-      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
-  in
-  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
-  Cohttp_lwt_unix.Server.create
-    ~mode:(`TCP (`Port port))
-    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
-
-and listen_for_client () =
-    start_websocket !ip_addr (!port_number-1000) ()
 
 let rec id_from_oc cl oc =
     match cl with
@@ -962,7 +891,6 @@ let create_server sock =
 
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
-    port_number := port_num;
     read_neighboring_ips port_num;
     establish_connections_to_others ();
     print_endline "i finished";
@@ -971,12 +899,82 @@ let rec st port_num =
     print_endline "running";
     Lwt_main.run @@ serve ();;
 
-(* testing purposes, remove when complete *)
-let kek () = init_server ()
-
-(* testing purposes, remove when complete *)
-let ws () =
-    Lwt_main.run (start_websocket "localhost" 7777 ())
-
 let _ = Random.self_init()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * WEBSOCKET FOR A CLIENT IMPL                                               *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let handler
+    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+    (req  : Cohttp_lwt_unix.Request.t)
+    (body : Cohttp_lwt_body.t) =
+  let open Frame in
+  Lwt_io.eprintf
+        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  >>= fun _ ->
+(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
+  print_endline headers; *)
+  let uri = Cohttp.Request.uri req in
+  match Uri.path uri with
+  | "/" ->
+    Lwt_io.eprintf "[PATH] \n%!"
+    >>= fun () ->
+    Cohttp_lwt_body.drain_body body
+    >>= fun () ->
+    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+        fun f ->
+            match f.opcode with
+            | Frame.Opcode.Close ->
+                Printf.eprintf "[RECV] CLOSE\n%!"
+            | _ ->
+                (* do this shit here where u set append entries i guess *)
+                Printf.eprintf "[RECV] %s\n%!" f.content
+    );
+    >>= fun (resp, body, frames_out_fn) ->
+    (* send a message to the client *)
+    let _ =
+            (* replace msg with latest value from server *)
+            let msg = Printf.sprintf "connected!" in
+            Lwt_io.eprintf "[SEND] %s\n%!" msg
+            >>= fun () ->
+            Lwt.wrap1 frames_out_fn @@
+                Some (Frame.create ~content:msg ())
+            >>= Lwt.return
+    in
+    Lwt.return (resp, (body :> Cohttp_lwt_body.t))
+  | _ ->
+    Lwt_io.eprintf "[PATH] Catch-all\n%!"
+    >>= fun () ->
+    Cohttp_lwt_unix.Server.respond_string
+        ~status:`Not_found
+        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
+        ()
+
+let start_websocket host port () =
+  read_neighboring_ips port;
+  establish_connections_to_others ();
+  let conn_closed (ch,_) =
+    Printf.eprintf "[SERV] connection %s closed\n%!"
+      (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
+  in
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Cohttp_lwt_unix.Server.create
+    ~mode:(`TCP (`Port port))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+
+let start_client () =
+    start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+ *                                                                           *
+ *                                                                           *
+ * END WEBSOCKET SHIT                                                        *
+ *                                                                           *
+ *                                                                           *
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 

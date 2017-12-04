@@ -30,7 +30,7 @@ class App extends React.Component {
   }
 
   openWebsocket(ip) {
-    let wsURL = 'ws://' + ip + '/ws';
+    let wsURL = 'ws://' + ip + '/';
     try {
       this.ws = new WebSocket(wsURL);
     } catch (e) {
@@ -71,16 +71,16 @@ class App extends React.Component {
     this.setState({
       box_text: ""
     });
-    try {
+    // try {
       this.ws.send(this.state.box_text);
       this.setState({
         ws_page_msg: "Sent!"
       });
-    } catch(e) {
-      this.setState({
-        ws_page_msg: "Error with sending message!"
-      });
-    }
+    // } catch(e) {
+    //   this.setState({
+    //     ws_page_msg: "Error with sending message!"
+    //   });
+    // }
   }
 
   render () {
