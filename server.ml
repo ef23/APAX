@@ -58,7 +58,6 @@ let serv_state = {
     alive = true;
 }
 
-
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
@@ -120,6 +119,9 @@ let update_neighbors ips id =
 
 let channels = ref []
 
+(* oc, rpc  *)
+let need_ae_res_from = ref []
+
 let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
@@ -143,20 +145,6 @@ let stringify_e (e:entry): string =
     "}"
   in json
 
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
 (*
 
     failwith
@@ -176,7 +164,8 @@ let res_append_entries (ae_res:append_entries_res) oc =
         "\"success\":" ^ string_of_bool ae_res.success ^"," ^
         "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
       "}"
-    in send_msg json oc
+    in 
+    send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
@@ -273,7 +262,9 @@ let req_append_entries (msg : append_entries_req) oc =
         ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
-    in send_msg json oc
+    in 
+    send_msg json oc
+
 (*
 
     failwith
@@ -283,16 +274,6 @@ let req_append_entries (msg : append_entries_req) oc =
  - then when majority, incr commit index
 
  " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
 
 let req_request_vote ballot oc =
     let json =
@@ -561,7 +542,6 @@ let handle_ae_req msg oc =
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
-
     handle_precheck current_term;
 
     let s_count = (if success then !success_count + 1 else !success_count) in
@@ -671,8 +651,7 @@ let handle_message msg oc =
             } in
 
             let old_log = serv_state.log in
-            let new_idx = (List.length old_log) + 1 in
-            serv_state.log <- (new_idx,new_entry)::old_log;
+            let new_idx = (List.length old_log) + 1 in 
             req_append_entries rpc oc; ()
     | _ -> ()
 
