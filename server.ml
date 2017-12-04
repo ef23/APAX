@@ -27,11 +27,12 @@ type state = {
     mutable nextIndexList : (string*int) list; (* id * next index *)
     mutable matchIndexList : (string*int) list; (* id * match index *)
     mutable received_heartbeat : bool;
+    mutable alive : bool;
 }
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 1.50 in
+    let lower = 5.50 in
     let range = 4.00 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
@@ -54,6 +55,7 @@ let serv_state = {
     nextIndexList = [];
     matchIndexList = [];
     received_heartbeat = false;
+    alive = true;
 }
 
 
@@ -116,6 +118,7 @@ let update_neighbors ips id =
     serv_state.neighboringIPs <- ips;
     serv_state.id <- id
 
+(* (string * (ic * oc)) list *)
 let channels = ref []
 
 let listen_address = get_my_addr ()
@@ -335,19 +338,22 @@ let rec send_rpcs f =
     send_to_ocs lst_o
 
 let rec send_heartbeat oc () =
-    let temp_str = "kek" in
-    Lwt_io.write_line oc (
-        "{" ^
-        "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
-        "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
-        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
-        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": \"\"," ^
-        "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
-        "}");
-    Lwt_io.flush oc;
-    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+    print_endline "in send hearbteat";
+    if (serv_state.alive != false) then 
+        let temp_str = "kek" in
+        Lwt_io.write_line oc (
+            "{" ^
+            "\"type\":\"heartbeat\"," ^
+            "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+            "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
+            "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+            "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+            "\"entries\": \"\"," ^
+            "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
+            "}");
+        Lwt_io.flush oc;
+        Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
+
 
 let send_heartbeats () =
     let lst_o = List.map (fun (ip, chans) -> chans) !channels in
@@ -358,9 +364,10 @@ let send_heartbeats () =
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
-          Lwt.bind hb_interval (fun () -> send_heartbeat oc_in ())
+          Lwt.on_termination hb_interval (fun () -> send_heartbeat oc_in ())
           in
-          ignore (Thread.create start_timer oc); send_to_ocs t;
+          start_timer oc;
+          send_to_ocs t
         end
       | [] -> () in
     print_endline "number of ocs";
@@ -444,9 +451,9 @@ and act_candidate () =
         if serv_state.role = Candidate
         then begin
                 serv_state.votedFor <- None;
-                Lwt.bind hb_interval (fun () -> act_candidate ())
+                Lwt.on_termination hb_interval (fun () -> act_candidate ())
             end
-        else Lwt.return () in
+        (*else Lwt.return () *)in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
@@ -454,7 +461,7 @@ and act_candidate () =
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
     if (List.length serv_state.neighboringIPs)=1 then win_election ();
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -484,12 +491,12 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
+            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (act_follower)
         end
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -512,6 +519,22 @@ and lose_election () =
 and terminate_election () =
     change_heartbeat ();
     start_election ()
+
+let rec id_from_oc cl oc = 
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
+let rec update_matchIndex oc = 
+    match (id_from_oc !channels oc) with
+    | None -> failwith "uh wtf"
+    | Some id -> 
+        (* basically rebuild the entire matchIndex list lol *)
+        let rec apply build li id = () in
+        ()
 
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
@@ -715,7 +738,6 @@ let init_server () =
 
     List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
-    print_endline "changed heart";
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
