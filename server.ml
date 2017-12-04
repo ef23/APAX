@@ -85,14 +85,11 @@ let full_addr_str port_num =
 
 let read_neighboring_ips port_num =
   let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
-  let port_regex = "\:[0-9]*" in
-  let port_regex = "[0-9]" in
   let rec process_file f_channel =
     try
       let line = Pervasives.input_line f_channel in
       let _ = Str.search_forward (Str.regexp ip_regex) line 0 in
       let ip_str = Str.matched_string line in
-      let _ = Str.search_forward (Str.regexp port_regex) line 0 in
       let ip_len = String.length ip_str in
       let port_int = int_of_string (Str.string_after line (ip_len + 1)) in
       let new_ip = (ip_str, port_int) in
@@ -137,7 +134,7 @@ let send_msg str oc =
 
 (* LOG REPLICATIONS *)
 
-let stringify_entry (e:entry): string =
+let stringify_e (e:entry): string =
   let json =
     "{" ^
       "\"value\":" ^ (string_of_int e.value) ^ "," ^
@@ -155,7 +152,8 @@ let req_append_entries (msg : append_entries_req) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
@@ -271,7 +269,8 @@ let req_append_entries (msg : append_entries_req) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_entry e) ^ "\n" ^ a) "" msg.entries) ^ "," ^
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
     in send_msg json oc
@@ -330,7 +329,7 @@ let res_request_vote msg oc =
  * [req_append_entries msg]
  * [req_request_vote msg] *)
 let rec send_rpcs f =
-    let lst_o = !channels in
+    let lst_o = List.map (fun (ip, channel) -> channel) !channels in
     let rec send_to_ocs lst =
       match lst with
       | [] -> print_endline "sent all rpcs!"
@@ -353,7 +352,7 @@ let rec send_heartbeat oc () =
     Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
 
 let send_heartbeats () =
-    let lst_o = !channels in
+    let lst_o = List.map (fun (ip, chans) -> chans) !channels in
     print_endline " fdsafds";
     let rec send_to_ocs lst =
       match lst with
@@ -516,6 +515,40 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
+let rec id_from_oc cl oc = 
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
+let rec update_match_index oc = 
+    match (id_from_oc !channels oc) with
+    | None -> failwith "uh wtf"
+    | Some id -> 
+        (* basically rebuild the entire matchIndex list lol *)
+        let rec apply build mi_list idx = 
+            match mi_list with 
+            | [] -> failwith "this should literally never happen lol kill me"
+            | (s,i)::t -> 
+                if s = idx then
+                    (* note: nextIndex - matchIndex > 1 if and only if a new
+                     * leader comes into power with a significantly larger log
+                     * which is a result of unifying a network partition, which
+                     * is NOT a feature that we support *)
+                    (let n_matchi = List.length serv_state.log in
+                    serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
+                else apply ((s,i)::build) t idx
+        in 
+        apply [] serv_state.matchIndexList id; ()
+
+(* [update_next_index ] is only used by the leader *)
+let update_next_index oc =
+    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (ip, List.length serv_state.log)::new_indices
+
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
  * if not already a follower *)
@@ -561,12 +594,18 @@ let handle_ae_res msg oc =
 
     handle_precheck current_term;
 
+    if success then (update_match_index oc; update_next_index oc;);
+    
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
+
+    (* if we have a majority of followers allowing the commit, then commit *)
     if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* TODO commit to log *)
+
+        (* TODO need to keep sending the RPC to followers that have not yet responded *)
         ())
     else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
@@ -610,12 +649,23 @@ let handle_client_as_leader msg =
      (leader's current term & list.length for index)
     2. call req append entries"
 
+let update_output_channels oc msg =
+    print_endline "as;flkajsd";
+    let ip = msg |> member "ip" |> to_string in
+    let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in
+    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
+    print_endline (ip^"EVERYTHING IS OK");
+    channels := (ip, snd chans)::c_lst
+
+    (*remove oc and then add ip, oc*)
+
 let handle_message msg oc =
     print_endline ("here:"^msg);
     serv_state.received_heartbeat <- true;
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
     match msg_type with
+    | "oc" -> update_output_channels oc msg; ()
     | "heartbeat" -> print_endline "this is a heart"; process_heartbeat msg; ()
     | "sendall" -> send_heartbeats (); ()
     | "vote_req" -> handle_vote_req msg oc; ()
@@ -679,15 +729,27 @@ let rec handle_connection ic oc () =
             (handle_connection ic oc) ();
         | None -> begin Lwt_log.info "Connection closed." >>= return end)
 
+let send_ip oc =
+    let json =
+    "{" ^
+        "\"type\": \"oc\"," ^
+        "\"ip\": \"" ^ serv_state.id ^ "\"" ^
+    "}"
+    in
+    send_msg json oc
+
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
+
+    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
     print_endline "changed heart";
+    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) !channels;
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
     print_endline "after list";
     init_follower ();
     print_endline "rigth before"
@@ -698,7 +760,8 @@ let accept_connection conn =
     let ic = Lwt_io.of_fd Lwt_io.Input fd in
     let oc = Lwt_io.of_fd Lwt_io.Output fd in
     let otherl = !channels in
-    channels := ((ic, oc)::otherl);
+    let ip = "" in
+    channels := ((ip, (ic, oc))::otherl);
     let iplistlen = List.length (serv_state.neighboringIPs) in
     if (List.length !channels)=iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
@@ -729,6 +792,8 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
+
+
 let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
@@ -736,9 +801,12 @@ let main_client address portnum =
         print_endline (string_of_int (List.length (serv_state.neighboringIPs)));
         let%lwt ic, oc = Lwt_io.open_connection sockaddr in
         let otherl = !channels in
-             channels := ((ic, oc)::otherl);
+             let ip = "" in
+             channels := ((ip, (ic, oc))::otherl);
              let iplistlen = List.length (serv_state.neighboringIPs) in
+
              if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
+
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
