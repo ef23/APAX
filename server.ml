@@ -21,7 +21,7 @@ type state = {
     mutable role : role;
     mutable currentTerm : int;
     mutable votedFor : string option;
-    mutable log : (int * entry) list;
+    mutable log : (int * entry) list; (* index * entry list *)
     mutable commitIndex : int;
     mutable lastApplied : int;
     mutable heartbeat : float;
@@ -143,7 +143,22 @@ let stringify_e (e:entry): string =
     "}"
   in json
 
-let req_append_entries (msg : append_entries_req) oc =
+let nindex_from_id ip =
+    List.assoc ip serv_state.nextIndexList
+
+let req_append_entries (msg : append_entries_req) (ip : string) oc =
+    let entries = [] in
+    let next_index = nindex_from_id ip in
+    let entries =
+        let rec add_relevant es = function
+        | [] -> es
+        | (i, e)::t ->
+            if i >= next_index
+            then add_relevant (e::es) t
+            else add_relevant es t
+        in
+        add_relevant entries (List.rev serv_state.log)
+    in
     let json =
        "{" ^
         "\"type\": \"appd_req\"," ^
@@ -152,7 +167,7 @@ let req_append_entries (msg : append_entries_req) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" entries)
         ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
@@ -240,6 +255,9 @@ let process_conflicts entries =
     let n_log = iter_entries entries old_log in
     serv_state.log <- n_log
 
+(* [append_new_entries entries] adds the new entries to the log
+ * the entries must be in reverse chronological order as with the log
+ *)
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
     let rec append_new (entries: entry list):unit =
@@ -260,20 +278,7 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
-let req_append_entries (msg : append_entries_req) oc =
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in send_msg json oc
+
 (*
 
     failwith
@@ -283,16 +288,6 @@ let req_append_entries (msg : append_entries_req) oc =
  - then when majority, incr commit index
 
  " *)
-
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
-let res_append_entries (ae_res:append_entries_res) oc =
-    let json =
-      "{" ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"currentTerm\":"  ^ string_of_int ae_res.current_term ^
-      "}"
-    in send_msg json oc
 
 let req_request_vote ballot oc =
     let json =
@@ -515,7 +510,7 @@ and terminate_election () =
     change_heartbeat ();
     start_election ()
 
-let rec id_from_oc cl oc = 
+let rec id_from_oc cl oc =
     match cl with
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
@@ -523,15 +518,15 @@ let rec id_from_oc cl oc =
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
  * updates its matchIndex in this server's matchIndex list
  * -requires the server of [oc] to have responded to an AEReq with true *)
-let rec update_match_index oc = 
+let rec update_match_index oc =
     match (id_from_oc !channels oc) with
     | None -> failwith "uh wtf"
-    | Some id -> 
+    | Some id ->
         (* basically rebuild the entire matchIndex list lol *)
-        let rec apply build mi_list idx = 
-            match mi_list with 
+        let rec apply build mi_list idx =
+            match mi_list with
             | [] -> failwith "this should literally never happen lol kill me"
-            | (s,i)::t -> 
+            | (s,i)::t ->
                 if s = idx then
                     (* note: nextIndex - matchIndex > 1 if and only if a new
                      * leader comes into power with a significantly larger log
@@ -540,7 +535,7 @@ let rec update_match_index oc =
                     (let n_matchi = List.length serv_state.log in
                     serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
                 else apply ((s,i)::build) t idx
-        in 
+        in
         apply [] serv_state.matchIndexList id; ()
 
 (* [update_next_index ] is only used by the leader *)
@@ -595,7 +590,7 @@ let handle_ae_res msg oc =
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
-    
+
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -705,7 +700,12 @@ let handle_message msg oc =
             let old_log = serv_state.log in
             let new_idx = (List.length old_log) + 1 in
             serv_state.log <- (new_idx,new_entry)::old_log;
-            req_append_entries rpc oc; ()
+            (*TODO iterate through channel list and send rpc*)
+            (*TODO find oc and get the entries to send*)
+
+            List.map (fun (ip, (_, oc)) -> req_append_entries rpc ip oc) !channels;
+
+            ()
     | _ -> ()
 
 
