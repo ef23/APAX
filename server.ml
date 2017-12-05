@@ -328,7 +328,7 @@ let rec send_heartbeat oc () =
         "\"leader_commit\":" ^ string_of_int serv_state.commitIndex ^
         "}");
     Lwt_io.flush oc;
-    Lwt.bind hb_interval(fun () -> send_heartbeat oc ())
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
 (* [force_conform id] forces server with id [id] to conform to the leader's log
  * if there is an inconsistency between the logs (aka the AERes success would be
@@ -408,7 +408,7 @@ let send_heartbeats () =
         begin
           print_endline "in send heartbeat match";
           let start_timer oc_in =
-          Lwt.bind hb_interval (fun () -> send_heartbeat oc_in ())
+          Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
           in
           ignore (Thread.create start_timer oc); send_to_ocs t;
         end
@@ -454,8 +454,6 @@ and act_leader () =
     print_endline "act leader";
     act_all();
     send_heartbeats (); ()
-    (* LOG REPLICATIONS *)
-    (* TODO listen for client req and send appd_entries *)
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
@@ -474,7 +472,7 @@ and init_leader () =
     print_endline "init leader";
     build_match_index [] serv_state.neighboringIPs;
     let n_idx = (get_p_log_idx ()) + 1 in
-    build_next_index [] serv_state.neighboringIPs;
+    build_next_index [] serv_state.neighboringIPs n_idx;
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
@@ -494,9 +492,9 @@ and act_candidate () =
         if serv_state.role = Candidate
         then begin
                 serv_state.votedFor <- None;
-                Lwt.bind hb_interval (fun () -> act_candidate ())
+                Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_candidate ())
             end
-        else Lwt.return () in
+        else () in
 
     (* call act_candidate again if timer runs out *)
     change_heartbeat ();
@@ -505,7 +503,7 @@ and act_candidate () =
      * listen for responses to the req_votes *)
     print_endline (string_of_int (List.length serv_state.neighboringIPs));
     if (List.length serv_state.neighboringIPs)<=1 then win_election ();
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
     change_heartbeat ();
@@ -535,12 +533,12 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
+            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
         end
 
 and init_follower () =
     print_endline "init follower";
-    Lwt.bind (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
+    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
@@ -628,14 +626,13 @@ let handle_ae_req msg oc =
         success = success_bool;
         current_term = serv_state.currentTerm;
     } in
+    (* TODO do we still process conflicts and append new entries if success = false???? *)
     process_conflicts entries; (* 3 *)
     append_new_entries entries; (* 4 *)
     if leader_commit > serv_state.commitIndex then
         (let new_commit = min leader_commit (get_p_log_idx ()) in
         serv_state.commitIndex <- new_commit); (* 5 *)
     res_append_entries ae_res oc
-
-    (* failwith "parse every json field in AE RPC. follow the receiver implementation in the pdf" *)
 
 let handle_ae_res msg oc =
     let current_term = msg |> member "current_term" |> to_int in
@@ -683,7 +680,7 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     (* handle_precheck currTerm; *)
     if voted then vote_counter := !vote_counter + 1;
-    if !vote_counter > (((List.length serv_state.neighboringIPs) + 1) / 2)
+    if serv_state.role <> Leader && !vote_counter > (((List.length serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
