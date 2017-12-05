@@ -86,6 +86,18 @@ let hb_interval = (Lwt_unix.sleep 1.)
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
+                         WEBSOCKET CLIENT SERVER FIELDS
+
+ * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
+let res_client_msg = ref "connected!"
+let leader_ip = ref ""
+let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
+let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
+let (body_ws : Cohttp_lwt_body.t option ref) = ref None
+
+(* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+
                             HELPER FUNCTIONS
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
@@ -728,6 +740,10 @@ let handle_message msg oc =
                         ()
                     end
     | "appd_res" -> ()
+    | "find_leader" ->
+        let res = "{\"type\": \"find_leader_res\", \"leader\": \""^serv_state.leader_id^"\"}" in
+        send_msg res oc; ()
+    | "find_leader_res" -> leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
         (* TODO redirect client to Leader *)
         if serv_state.role <> Leader then
@@ -905,16 +921,13 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-let res_client_msg = ref "connected!"
-let leader_oc = ref None
-let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
-let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
-let (body_ws : Cohttp_lwt_body.t option ref) = ref None
-
 let rec send_msg_from_client msg =
-    if (!leader_oc=None) then
-        (* find the leader ip and oc *) ()
-    else (* send entry to leader oc *) ()
+    if (!leader_ip="") then
+        let find_ip_json = "{\"type\":\"find_leader\"}" in
+        match List.nth_opt !channels 0 with
+        | Some (ip, (ic, oc)) -> send_msg find_ip_json oc; ()
+        | None -> ()
+    else print_endline !leader_ip; ()
 
 let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
@@ -969,7 +982,6 @@ let handler
 let start_websocket host port () =
   read_neighboring_ips port;
   establish_connections_to_others false;
-  print_endline (string_of_int (List.length !channels));
   let conn_closed (ch,_) =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
