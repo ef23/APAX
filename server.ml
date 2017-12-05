@@ -321,7 +321,7 @@ let rec send_heartbeat oc () =
     Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ temp_str (* serv_state.leader_id *) ^ "\"" ^ "," ^
+        "\"leader_id\":" ^ "\"" ^ serv_state.id ^ "\"" ^ "," ^
         "\"term\":" ^ string_of_int serv_state.currentTerm ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
