@@ -341,6 +341,25 @@ let force_conform id =
     serv_state.nextIndexList <- (id, ni-1)::new_indices;
     (* TODO do i retry the AEReq here? upon next client req? *)
     ()
+
+(* [check_commit_index ()] updates the commitIndex for the Leader by finding an
+ * N such that N > commitIndex, a majority of matchIndex values >= N, and the
+ * term of the Nth entry in the leader's log is equal to currentTerm *)
+let rec check_commit_index () = 
+    (* upper bound on N, which is the index of the last entry *)
+    let ub = get_p_log_idx () in
+    let init_N = serv_state.commitIndex + 1 in
+
+    (* find whether the majority of followers have matchIndex >= N *)
+    let rec mi_geq_n count total n li = 
+        match li with
+        | [] -> (count > (total / 2))
+        | (_,i)::t -> 
+            if i >= n then mi_geq_n (count+1) total n t
+            else mi_geq_n count total n t in
+    (* TODO *)
+    let rec find_n ub n = () in () 
+
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            MAIN SERVER FUNCTIONS
@@ -669,7 +688,7 @@ let handle_vote_req msg oc =
     print_endline "this is vote req";
     print_endline (string_of_bool (serv_state.role = Follower));
     let t = msg |> member "term" |> to_int in
-    (* handle_precheck t; *)
+    handle_precheck t;
     res_request_vote msg oc; ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
@@ -678,7 +697,7 @@ let handle_vote_res msg =
     print_endline "handling vote res!";
     let currTerm = msg |> member "current_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
-    (* handle_precheck currTerm; *)
+    handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;
     if serv_state.role <> Leader && !vote_counter > (((List.length serv_state.neighboringIPs) + 1) / 2)
             then win_election ()
