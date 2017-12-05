@@ -388,16 +388,16 @@ let update_next_index oc =
 (* [update_commit_index ()] updates the commitIndex for the Leader by finding an
  * N such that N > commitIndex, a majority of matchIndex values >= N, and the
  * term of the Nth entry in the leader's log is equal to currentTerm *)
-let update_commit_index () = 
+let update_commit_index () =
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
     let init_N = serv_state.commitIndex + 1 in
 
     (* find whether the majority of followers have matchIndex >= N *)
-    let rec mi_geq_n count total n li = 
+    let rec mi_geq_n count total n li =
         match li with
         | [] -> (count > (total / 2))
-        | (_,i)::t -> 
+        | (_,i)::t ->
             if i >= n then mi_geq_n (count+1) total n t
             else mi_geq_n count total n t in
 
@@ -771,7 +771,7 @@ let handle_message msg oc =
     | "find_leader" ->
         let res = "{\"type\": \"find_leader_res\", \"leader\": \""^serv_state.leader_id^"\"}" in
         send_msg res oc; ()
-    | "find_leader_res" -> leader_ip := (msg |> member "leader" |> to_string)
+    | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
         (* TODO redirect client to Leader *)
         if serv_state.role <> Leader then
@@ -951,10 +951,13 @@ let _ = Random.self_init()
 
 let rec send_msg_from_client msg =
     if (!leader_ip="") then
-        let find_ip_json = "{\"type\":\"find_leader\"}" in
-        match List.nth_opt !channels 0 with
-        | Some (ip, (ic, oc)) -> send_msg find_ip_json oc; ()
-        | None -> ()
+        begin
+            List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
+            let find_ip_json = "{\"type\":\"find_leader\"}" in
+            match List.nth_opt !channels 0 with
+            | Some (ip, (ic, oc)) -> print_endline ip; send_msg find_ip_json oc; ()
+            | None -> ()
+        end
     else print_endline !leader_ip; ()
 
 let handler
@@ -1007,17 +1010,20 @@ let handler
         ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
         ()
 
-let start_websocket host port () =
-  read_neighboring_ips port;
+let start_websocket host port_num () =
+  read_neighboring_ips port_num;
   establish_connections_to_others false;
+  let sock = create_socket (port_num+1) () in
+  let serve = create_server sock in
   let conn_closed (ch,_) =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
   in
-  Lwt_io.eprintf "[SERV] Listening for HTTP on port %d\n%!" port >>= fun () ->
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port_num %d\n%!" port_num >>= fun () ->
   Cohttp_lwt_unix.Server.create
-    ~mode:(`TCP (`Port port))
-    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ())
+    ~mode:(`TCP (`Port port_num))
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ());
+  Lwt_main.run @@ serve ()
 
 let start_client () =
     start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
