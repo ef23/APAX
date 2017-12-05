@@ -342,10 +342,40 @@ let force_conform id =
     (* TODO do i retry the AEReq here? upon next client req? *)
     ()
 
-(* [check_commit_index ()] updates the commitIndex for the Leader by finding an
+
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
+let rec update_match_index oc =
+    match (id_from_oc !channels oc) with
+    | None -> failwith "uh wtf"
+    | Some id ->
+        (* basically rebuild the entire matchIndex list lol *)
+        let rec apply build mi_list idx =
+            match mi_list with
+            | [] -> failwith "this should literally never happen lol kill me"
+            | (s,i)::t ->
+                if s = idx then
+                    (* note: nextIndex - matchIndex > 1 if and only if a new
+                     * leader comes into power with a significantly larger log
+                     * which is a result of unifying a network partition, which
+                     * is NOT a feature that we support *)
+                    (let n_matchi = List.length serv_state.log in
+                    serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
+                else apply ((s,i)::build) t idx
+        in
+        apply [] serv_state.matchIndexList id; ()
+
+(* [update_next_index ] is only used by the leader *)
+let update_next_index oc =
+    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.nextIndexList in
+    serv_state.nextIndexList <- (ip, List.length serv_state.log)::new_indices
+
+(* [update_commit_index ()] updates the commitIndex for the Leader by finding an
  * N such that N > commitIndex, a majority of matchIndex values >= N, and the
  * term of the Nth entry in the leader's log is equal to currentTerm *)
-let rec check_commit_index () = 
+let update_commit_index () = 
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
     let init_N = serv_state.commitIndex + 1 in
@@ -365,7 +395,8 @@ let rec check_commit_index () =
         else if (mi_geq_n 0 (List.length l) n l) then find_n ub (n+1) n
         else find_n ub (n+1) high in
 
-    find_n ub init_N serv_state.commitIndex
+    let n_ci = find_n ub init_N serv_state.commitIndex in
+    serv_state.commitIndex <- n_ci; ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -393,7 +424,6 @@ let read_neighboring_ips port_num =
     | End_of_file -> Pervasives.close_in f_channel; ()
   in
   process_file (Pervasives.open_in "ips.txt")
-
 
 let req_request_vote ballot oc =
     let json =
@@ -478,6 +508,7 @@ let rec start_election () =
 and act_leader () =
     (* start thread to periodically send heartbeats *)
     print_endline "act leader";
+    update_commit_index ();
     act_all();
     send_heartbeats (); ()
 and init_leader () =
@@ -592,35 +623,6 @@ let rec id_from_oc cl oc =
     match cl with
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
-
-(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
- * updates its matchIndex in this server's matchIndex list
- * -requires the server of [oc] to have responded to an AEReq with true *)
-let rec update_match_index oc =
-    match (id_from_oc !channels oc) with
-    | None -> failwith "uh wtf"
-    | Some id ->
-        (* basically rebuild the entire matchIndex list lol *)
-        let rec apply build mi_list idx =
-            match mi_list with
-            | [] -> failwith "this should literally never happen lol kill me"
-            | (s,i)::t ->
-                if s = idx then
-                    (* note: nextIndex - matchIndex > 1 if and only if a new
-                     * leader comes into power with a significantly larger log
-                     * which is a result of unifying a network partition, which
-                     * is NOT a feature that we support *)
-                    (let n_matchi = List.length serv_state.log in
-                    serv_state.matchIndexList <- ([(s,n_matchi)]@t@build); ())
-                else apply ((s,i)::build) t idx
-        in
-        apply [] serv_state.matchIndexList id; ()
-
-(* [update_next_index ] is only used by the leader *)
-let update_next_index oc =
-    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
-    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.nextIndexList in
-    serv_state.nextIndexList <- (ip, List.length serv_state.log)::new_indices
 
 (* [handle_precheck t] checks the term of the sending server and updates this
  * server's term if it is outdated; also immediately reverts to follower role
