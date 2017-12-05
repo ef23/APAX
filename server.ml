@@ -669,11 +669,12 @@ let handle_ae_res msg oc =
         | None -> failwith "not possible"
         | Some x -> x
     ) in
+
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
-
     if (not success) then (force_conform responder_id);
+
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -681,8 +682,12 @@ let handle_ae_res msg oc =
     if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
-        (* TODO commit to log *)
-        ())
+        (* commit to log by incrementing the commitIndex *)
+        (* TODO VERY IMPORTANT: HOW DO WE IGNORE EXTRA RESPONSES AFTERWARDS?
+         * aka we don't want to add to the response_count bc they could be handling
+         * the next round of AEres, so we need to track who has responded to which AEreqs *)
+        let old_ci = serv_state.commitIndex in
+        serv_state.commitIndex <- old_ci + 1; ())
     else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
@@ -779,11 +784,10 @@ let handle_message msg oc =
             let old_log = serv_state.log in
             let new_idx = (List.length old_log) + 1 in
             serv_state.log <- (new_idx,new_entry)::old_log;
-            (*TODO iterate through channel list and send rpc*)
-            (*TODO find oc and get the entries to send*)
 
+            (* iterate through channel list and send rpc*)
+            (* find oc and get the entries to send*)
             List.map (fun (ip, (_, oc)) -> req_append_entries rpc ip oc) !channels;
-
             ()
     | _ -> ()
 
