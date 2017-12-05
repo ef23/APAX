@@ -775,7 +775,9 @@ let handle_message msg oc =
                     end
     | "appd_res" -> get_ae_response_from := (List.remove_assq oc !get_ae_response_from); ()
     | "find_leader" ->
-        let res = "{\"type\": \"find_leader_res\", \"leader\": \""^serv_state.leader_id^"\"}" in
+        let res_id = if (serv_state.role = Leader) then serv_state.id
+        else serv_state.leader_id in
+        let res = "{\"type\": \"find_leader_res\", \"leader\": \""^res_id^"\"}" in
         send_msg res oc; ()
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
@@ -849,7 +851,6 @@ let init_server () =
 
     List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
-    print_endline "changed heart";
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
@@ -905,7 +906,7 @@ let main_client address portnum is_server =
         let otherl = !channels in
              let ip = "" in
              channels := ((ip, (ic, oc))::otherl);
-             let iplistlen = List.length (serv_state.neighboringIPs) in
+             let iplistlen = (List.length (serv_state.neighboringIPs))-1 in
 
              if (List.length !channels)=iplistlen && is_server then (print_endline "connections good"; init_server ()) else print_endline "not good";
 
@@ -958,7 +959,10 @@ let _ = Random.self_init()
 let rec send_msg_from_client msg =
     if (!leader_ip="") then
         begin
-            List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
+            let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
+            List.iter
+            (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+                (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
             let find_ip_json = "{\"type\":\"find_leader\"}" in
             match List.nth_opt !channels 0 with
             | Some (ip, (ic, oc)) -> print_endline ip; send_msg find_ip_json oc; ()
