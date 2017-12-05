@@ -337,12 +337,10 @@ let rec send_heartbeat oc () =
 let force_conform id =
     let ni = nindex_from_id id in
     (* update the nextIndex for this server to be ni - 1 *)
-    (* TODO this is kinda duplicate code but idk how else to do it *)
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
     serv_state.nextIndexList <- (id, ni-1)::new_indices;
     (* TODO do i retry the AEReq here? upon next client req? *)
     ()
-
 
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
  * updates its matchIndex in this server's matchIndex list
@@ -684,8 +682,6 @@ let handle_ae_res msg oc =
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* TODO commit to log *)
-
-        (* TODO need to keep sending the RPC to followers that have not yet responded *)
         ())
     else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
