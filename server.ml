@@ -849,7 +849,7 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
-let main_client address portnum =
+let main_client address portnum is_server =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
@@ -860,14 +860,14 @@ let main_client address portnum =
              channels := ((ip, (ic, oc))::otherl);
              let iplistlen = List.length (serv_state.neighboringIPs) in
 
-             if (List.length !channels)=iplistlen then (print_endline "connections good"; init_server ()) else print_endline "not good";
+             if (List.length !channels)=iplistlen && is_server then (print_endline "connections good"; init_server ()) else print_endline "not good";
 
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
                                         exit 2 ;;
 
-let establish_connections_to_others () =
+let establish_connections_to_others is_server =
     print_endline "establish";
     let ip_ports_list = serv_state.neighboringIPs in
     let rec get_connections lst =
@@ -876,7 +876,7 @@ let establish_connections_to_others () =
         | (ip_addr, portnum)::t ->
         begin
             print_endline "in begin";
-            main_client ip_addr portnum;
+            main_client ip_addr portnum is_server;
             get_connections t;
         end
     in get_connections ip_ports_list
@@ -891,7 +891,7 @@ let create_server sock =
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
     read_neighboring_ips port_num;
-    establish_connections_to_others ();
+    establish_connections_to_others true;
     print_endline "i finished";
     let sock = create_socket port_num () in
     let serve = create_server sock in
@@ -908,10 +908,24 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
+let res_client_msg = ref "connected!"
+let leader_oc = ref None
+let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
+let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
+let (body_ws : Cohttp_lwt_body.t option ref) = ref None
+
+let rec send_msg_from_client msg =
+    if (!leader_oc=None) then
+        (* find the leader ip and oc *) ()
+    else (* send entry to leader oc *) ()
+
 let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
     (req  : Cohttp_lwt_unix.Request.t)
     (body : Cohttp_lwt_body.t) =
+  if !conn_ws = None then conn_ws := Some conn;
+  if !req_ws = None then req_ws := Some req;
+  if !body_ws = None then body_ws := Some body;
   let open Frame in
   Lwt_io.eprintf
         "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
@@ -932,6 +946,7 @@ let handler
                 Printf.eprintf "[RECV] CLOSE\n%!"
             | _ ->
                 (* do this shit here where u set append entries i guess *)
+                send_msg_from_client f.content;
                 Printf.eprintf "[RECV] %s\n%!" f.content
     );
     >>= fun (resp, body, frames_out_fn) ->
@@ -939,7 +954,7 @@ let handler
     let _ =
             (* replace msg with latest value from server *)
             let msg = Printf.sprintf "connected!" in
-            Lwt_io.eprintf "[SEND] %s\n%!" msg
+            Lwt_io.eprintf "[SEND] %s\n%!" !res_client_msg
             >>= fun () ->
             Lwt.wrap1 frames_out_fn @@
                 Some (Frame.create ~content:msg ())
@@ -956,7 +971,8 @@ let handler
 
 let start_websocket host port () =
   read_neighboring_ips port;
-  establish_connections_to_others ();
+  establish_connections_to_others false;
+  print_endline (string_of_int (List.length !channels));
   let conn_closed (ch,_) =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
@@ -972,7 +988,7 @@ let start_client () =
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *                                                                           *
  *                                                                           *
- * END WEBSOCKET SHIT                                                        *
+ * END WEBSOCKET                                                             *
  *                                                                           *
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
