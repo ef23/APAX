@@ -31,6 +31,8 @@ type state = {
     mutable received_heartbeat : bool;
 }
 
+let get_ae_response_from = ref []
+
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
     let lower = 0.150 in
@@ -144,8 +146,6 @@ let update_neighbors ips id =
 let channels = ref []
 
 (* oc, rpc  *)
-let need_ae_res_from = ref []
-
 let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
@@ -169,7 +169,7 @@ let stringify_e (e:entry): string =
 
 let nindex_from_id ip =
     List.assoc ip serv_state.nextIndexList
-
+(* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
     let entries = [] in
     let next_index = nindex_from_id ip in
@@ -469,6 +469,11 @@ let send_heartbeats () =
       | [] -> () in
     print_endline "number of ocs";
     print_endline (string_of_int (List.length lst_o));
+    let id_of_oc occ = 
+    match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
+    | Some (idd, (i, oo)) -> idd
+    | None -> "" in
+    List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ()) !get_ae_response_from; 
     send_to_ocs lst_o
 
 (* [act_all ()] is a simple check that all servers perform regularly, regardless
@@ -756,7 +761,7 @@ let handle_message msg oc =
                         handle_ae_req msg oc;
                         ()
                     end
-    | "appd_res" -> ()
+    | "appd_res" -> get_ae_response_from := (List.remove_assq oc !get_ae_response_from); ()
     | "client" ->
         (* TODO redirect client to Leader *)
         if serv_state.role <> Leader then
@@ -785,10 +790,11 @@ let handle_message msg oc =
             let new_idx = (List.length old_log) + 1 in
             serv_state.log <- (new_idx,new_entry)::old_log;
 
-            (* iterate through channel list and send rpc*)
-            (* find oc and get the entries to send*)
-            List.map (fun (ip, (_, oc)) -> req_append_entries rpc ip oc) !channels;
-            ()
+            (*TODgetO iterate through channel list and send rpc*)
+            (*TODO find oc and get the entries to send*)
+
+            let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
+            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
 
