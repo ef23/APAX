@@ -104,8 +104,8 @@ let rec nindex_from_id id =
 
 (* the lower range of the elec tion timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 1.50 in
-    let range = 4.00 in
+    let lower = 1.00 in
+    let range = 2.00 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
     timer
@@ -316,6 +316,7 @@ let rec append_new_entries (entries : entry list) : unit =
     append_new entries
 
 let rec send_heartbeat oc () =
+    print_endline "sending heartbeat";
     let temp_str = "kek" in
     Lwt_io.write_line oc (
         "{" ^
@@ -401,7 +402,6 @@ let res_request_vote msg oc =
 
 let send_heartbeats () =
     let lst_o = List.map (fun (ip, chans) -> chans) !channels in
-    print_endline " fdsafds";
     let rec send_to_ocs lst =
       match lst with
       | (ic, oc)::t ->
@@ -453,6 +453,7 @@ and act_leader () =
     (* start thread to periodically send heartbeats *)
     print_endline "act leader";
     act_all();
+    print_endline ("my heartbeat timer: " ^ string_of_float (serv_state.heartbeat));
     send_heartbeats (); ()
 and init_leader () =
     let rec build_match_index build ips =
@@ -483,6 +484,7 @@ and act_candidate () =
     (* if the candidate is still a follower, then start a new election
      * otherwise terminate. *)
     print_endline "act candidate";
+    print_endline ("my heartbeat " ^ (string_of_float serv_state.heartbeat));
     act_all ();
     let check_election_complete () =
         (* if false, then election has not completed, so start new election.
@@ -497,7 +499,6 @@ and act_candidate () =
         else () in
 
     (* call act_candidate again if timer runs out *)
-    change_heartbeat ();
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
@@ -506,7 +507,6 @@ and act_candidate () =
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
-    change_heartbeat ();
     act_candidate ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
@@ -517,6 +517,7 @@ and init_candidate () =
  *)
 and act_follower () =
     print_endline "act follower";
+    print_endline ("my heartbeat " ^ (string_of_float serv_state.heartbeat));
     serv_state.role <- Follower;
 
     act_all ();
@@ -533,7 +534,7 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> act_follower ())
+            Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat)) (fun () -> act_follower ())
         end
 
 and init_follower () =
@@ -559,7 +560,6 @@ and lose_election () =
 (* [terminate_election ()] executes when timeout occurs in the middle of an
  * election with no resolution (i.e. no one wins or loses) *)
 and terminate_election () =
-    change_heartbeat ();
     start_election ()
 
 let rec id_from_oc cl oc =
