@@ -86,6 +86,10 @@ let () = Lwt_log.add_rule "*" Lwt_log.Info
 
 let hb_interval = (Lwt_unix.sleep 1.)
 
+(* (append_entries_req * int) list that maps the specific request to the number
+ * of responses to it with success=true *)
+let ae_req_to_count = ref []
+
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                             HELPER FUNCTIONS
@@ -171,18 +175,6 @@ let nindex_from_id ip =
     List.assoc ip serv_state.nextIndexList
 (* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
-    let entries = [] in
-    let next_index = nindex_from_id ip in
-    let entries =
-        let rec add_relevant es = function
-        | [] -> es
-        | (i, e)::t ->
-            if i >= next_index
-            then add_relevant (e::es) t
-            else add_relevant es t
-        in
-        add_relevant entries (List.rev serv_state.log)
-    in
     let json =
        "{" ^
         "\"type\": \"appd_req\"," ^
@@ -191,7 +183,7 @@ let req_append_entries (msg : append_entries_req) (ip : string) oc =
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
         "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" entries)
+        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
         ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
@@ -677,8 +669,15 @@ let handle_ae_res msg oc =
 
     handle_precheck current_term;
 
+    (* TODO we may need to modify these functions depending on the request that
+     * this is in response to *)
     if success then (update_match_index oc; update_next_index oc;);
     if (not success) then (force_conform responder_id);
+
+    (* here we identify the request that this response is to via the first tuple
+     * whose oc matches [oc]; then we remove it if success is true *)
+
+    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
@@ -761,7 +760,7 @@ let handle_message msg oc =
                         handle_ae_req msg oc;
                         ()
                     end
-    | "appd_res" -> get_ae_response_from := (List.remove_assq oc !get_ae_response_from); ()
+    | "appd_res" -> handle_ae_res msg oc; ()
     | "client" ->
         (* TODO redirect client to Leader *)
         if serv_state.role <> Leader then
@@ -777,26 +776,42 @@ let handle_message msg oc =
                     index = msg |> member "index" |> to_int;
                 } in
 
+            let old_log = serv_state.log in
+            let new_idx = (List.length old_log) + 1 in
+            serv_state.log <- (new_idx,new_entry)::old_log;
+
+            let e = [] in
+            let next_index = nindex_from_id ip in
+            let entries_ =
+                let rec add_relevant es = function
+                | [] -> es
+                | (i, e)::t ->
+                    if i >= next_index
+                    then add_relevant (e::es) t
+                    else add_relevant es t
+                in
+                add_relevant e (List.rev serv_state.log)
+            in
+            
             let rpc = {
                 ap_term = serv_state.currentTerm;
                 leader_id = serv_state.id;
                 prev_log_index = p_log_idx ();
                 prev_log_term = p_log_term ();
-                entries = [];
+                entries = entries_;
                 leader_commit = serv_state.commitIndex;
             } in
-
-            let old_log = serv_state.log in
-            let new_idx = (List.length old_log) + 1 in
-            serv_state.log <- (new_idx,new_entry)::old_log;
 
             (*TODgetO iterate through channel list and send rpc*)
             (*TODO find oc and get the entries to send*)
 
             let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
-            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
-    | _ -> ()
+            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
 
+            (* add the request to the list such that early requests are at the
+             * beginning of the list *)
+            ae_req_to_count := (!ae_req_to_count @ [(rpc, 0)]); ()
+    | _ -> ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
  *                                                                           *
