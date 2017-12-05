@@ -386,6 +386,7 @@ let update_next_index oc =
 (* [update_commit_index ()] updates the commitIndex for the Leader by finding an
  * N such that N > commitIndex, a majority of matchIndex values >= N, and the
  * term of the Nth entry in the leader's log is equal to currentTerm *)
+
 let update_commit_index () =
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
@@ -496,6 +497,30 @@ let act_all () =
     if serv_state.commitIndex > la then
     (serv_state.lastApplied <- la + 1); ()
 
+let process_leader_death () =
+
+    print_endline serv_state.leader_id;
+    print_endline ("MU!!!");
+    let l_id = serv_state.leader_id in
+    if l_id <> "" then
+        let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+        let port_regex = "[0-9]*" in
+        let _ = Str.search_forward (Str.regexp ip_regex) l_id 0 in
+        let ip = Str.matched_string l_id in
+        print_endline("SDkjfaldsjfkalsdjf"^ip);
+        let _ = Str.search_forward (Str.regexp port_regex) l_id 0 in
+        let ip_len = String.length ip in
+        print_endline("SAAAAAAAADkjfaldsjfkalsdjf"^(Str.string_after l_id (ip_len + 1)));
+
+        let port = int_of_string (Str.string_after l_id (ip_len + 1)) in
+
+        serv_state.neighboringIPs <- List.filter (fun (i,p) -> i <> ip || p <> port) serv_state.neighboringIPs;
+        print_endline ("MUHWUHWUHWUHWHU");
+        print_endline (string_of_int (List.length serv_state.neighboringIPs));
+        channels := List.remove_assoc l_id !channels;
+        print_endline (string_of_int (List.length !channels));
+        serv_state.leader_id <- ""; ()
+
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
@@ -600,6 +625,7 @@ and act_follower () =
     print_endline (string_of_bool (serv_state.votedFor = None));
     if (serv_state.votedFor = None && serv_state.received_heartbeat = false)
     then begin
+            process_leader_death ();
             serv_state.role <- Candidate;
             init_candidate ()
         end
@@ -712,6 +738,8 @@ let handle_ae_res msg oc =
     else () (* do nothing basically *)
 
 let handle_vote_req msg oc =
+    (* at this point, the current leader has died, so need to delete leader *)
+    process_leader_death ();
     print_endline "this is vote req";
     print_endline (string_of_bool (serv_state.role = Follower));
     let t = msg |> member "term" |> to_int in
