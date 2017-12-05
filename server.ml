@@ -357,8 +357,15 @@ let rec check_commit_index () =
         | (_,i)::t -> 
             if i >= n then mi_geq_n (count+1) total n t
             else mi_geq_n count total n t in
-    (* TODO *)
-    let rec find_n ub n = () in () 
+
+    (* find the highest such n, n <= ub, such that the above function returns true *)
+    let rec find_n ub n high =
+        let l = serv_state.matchIndexList in
+        if n > ub then high
+        else if (mi_geq_n 0 (List.length l) n l) then find_n ub (n+1) n
+        else find_n ub (n+1) high in
+
+    find_n ub init_N serv_state.commitIndex
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
