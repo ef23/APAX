@@ -97,6 +97,7 @@ let leader_ip = ref ""
 let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
 let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
 let (body_ws : Cohttp_lwt_body.t option ref) = ref None
+let num_clients = 1
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -600,7 +601,7 @@ and act_candidate () =
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
     print_endline (string_of_int (List.length serv_state.neighboringIPs));
-    if (List.length serv_state.neighboringIPs)<=1 then win_election ();
+    if ((List.length serv_state.neighboringIPs)-num_clients)<=1 then win_election ();
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
@@ -722,7 +723,7 @@ let handle_ae_res msg oc =
     let t_count = !response_count + 1 in
 
     (* if we have a majority of followers allowing the commit, then commit *)
-    if s_count > ((List.length serv_state.neighboringIPs) / 2) then
+    if s_count > (((List.length serv_state.neighboringIPs)-num_clients) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* commit to log by incrementing the commitIndex *)
@@ -731,7 +732,7 @@ let handle_ae_res msg oc =
          * the next round of AEres, so we need to track who has responded to which AEreqs *)
         let old_ci = serv_state.commitIndex in
         serv_state.commitIndex <- old_ci + 1; ())
-    else if t_count = List.length serv_state.neighboringIPs then
+    else if t_count = ((List.length serv_state.neighboringIPs)-num_clients) then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
         ()) (* TODO notify client of failure *)
@@ -754,7 +755,8 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;
-    if serv_state.role <> Leader && !vote_counter > (((List.length serv_state.neighboringIPs) + 1) / 2)
+    if serv_state.role <> Leader && !vote_counter >
+        ((((List.length serv_state.neighboringIPs) + 1) - num_clients) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -993,7 +995,7 @@ let rec send_msg_from_client msg =
                 (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
             let find_ip_json = "{\"type\":\"find_leader\"}" in
             match List.nth_opt !channels 0 with
-            | Some (ip, (ic, oc)) -> print_endline ip; send_msg find_ip_json oc; ()
+            | Some (ip, (ic, oc)) -> send_msg find_ip_json oc; ()
             | None -> ()
         end
     else print_endline !leader_ip; ()
