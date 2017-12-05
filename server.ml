@@ -31,6 +31,8 @@ type state = {
     mutable received_heartbeat : bool;
 }
 
+let get_ae_response_from = ref []
+
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
     let lower = 0.150 in
@@ -156,8 +158,6 @@ let update_neighbors ips id =
 let channels = ref []
 
 (* oc, rpc  *)
-let need_ae_res_from = ref []
-
 let listen_address = get_my_addr ()
 let port = 9000
 let backlog = 10
@@ -181,7 +181,7 @@ let stringify_e (e:entry): string =
 
 let nindex_from_id ip =
     List.assoc ip serv_state.nextIndexList
-
+(* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
     let entries = [] in
     let next_index = nindex_from_id ip in
@@ -349,12 +349,10 @@ let rec send_heartbeat oc () =
 let force_conform id =
     let ni = nindex_from_id id in
     (* update the nextIndex for this server to be ni - 1 *)
-    (* TODO this is kinda duplicate code but idk how else to do it *)
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
     serv_state.nextIndexList <- (id, ni-1)::new_indices;
     (* TODO do i retry the AEReq here? upon next client req? *)
     ()
-
 
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
  * updates its matchIndex in this server's matchIndex list
@@ -483,6 +481,11 @@ let send_heartbeats () =
       | [] -> () in
     print_endline "number of ocs";
     print_endline (string_of_int (List.length lst_o));
+    let id_of_oc occ =
+    match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
+    | Some (idd, (i, oo)) -> idd
+    | None -> "" in
+    List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ()) !get_ae_response_from;
     send_to_ocs lst_o
 
 (* [act_all ()] is a simple check that all servers perform regularly, regardless
@@ -683,11 +686,12 @@ let handle_ae_res msg oc =
         | None -> failwith "not possible"
         | Some x -> x
     ) in
+
     handle_precheck current_term;
 
     if success then (update_match_index oc; update_next_index oc;);
-
     if (not success) then (force_conform responder_id);
+
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
 
@@ -695,10 +699,12 @@ let handle_ae_res msg oc =
     if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
-        (* TODO commit to log *)
-
-        (* TODO need to keep sending the RPC to followers that have not yet responded *)
-        ())
+        (* commit to log by incrementing the commitIndex *)
+        (* TODO VERY IMPORTANT: HOW DO WE IGNORE EXTRA RESPONSES AFTERWARDS?
+         * aka we don't want to add to the response_count bc they could be handling
+         * the next round of AEres, so we need to track who has responded to which AEreqs *)
+        let old_ci = serv_state.commitIndex in
+        serv_state.commitIndex <- old_ci + 1; ())
     else if t_count = List.length serv_state.neighboringIPs then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
@@ -767,7 +773,7 @@ let handle_message msg oc =
                         handle_ae_req msg oc;
                         ()
                     end
-    | "appd_res" -> ()
+    | "appd_res" -> get_ae_response_from := (List.remove_assq oc !get_ae_response_from); ()
     | "find_leader" ->
         let res = "{\"type\": \"find_leader_res\", \"leader\": \""^serv_state.leader_id^"\"}" in
         send_msg res oc; ()
@@ -799,12 +805,12 @@ let handle_message msg oc =
             let old_log = serv_state.log in
             let new_idx = (List.length old_log) + 1 in
             serv_state.log <- (new_idx,new_entry)::old_log;
-            (*TODO iterate through channel list and send rpc*)
+
+            (*TODgetO iterate through channel list and send rpc*)
             (*TODO find oc and get the entries to send*)
 
-            List.map (fun (ip, (_, oc)) -> req_append_entries rpc ip oc) !channels;
-
-            ()
+            let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
+            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
 
