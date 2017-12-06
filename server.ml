@@ -739,8 +739,9 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;
+    print_endline ("num clients " ^ (string_of_int num_clients));
     if serv_state.role <> Leader && !vote_counter >
-        ((((List.length serv_state.neighboringIPs) + 1) - num_clients) / 2)
+        ((((List.length serv_state.neighboringIPs)) - num_clients) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -814,7 +815,7 @@ let handle_message msg oc =
             serv_state.log <- (new_idx,new_entry)::old_log;
 
             let e = [] in
-            let next_index = nindex_from_id ip in
+            let next_index = nindex_from_id serv_state.id in
             let entries_ =
                 let rec add_relevant es = function
                 | [] -> es
@@ -899,7 +900,8 @@ let accept_connection conn =
     let ip = "" in
     channels := ((ip, (ic, oc))::otherl);
     let iplistlen = List.length (serv_state.neighboringIPs) in
-    if (List.length !channels)=iplistlen then init_server ();
+    print_endline (string_of_int iplistlen);
+    if (List.length !channels)=(iplistlen - 1) then init_server ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
