@@ -1,4 +1,4 @@
-First, https://github.com/vbmithr/ocaml-websocket must be cloned and built. This may require a bunch of dependencies during the build process. This is the only third party dependency we have (aside from Lwt). 
+First, https://github.com/vbmithr/ocaml-websocket must be cloned and built. This may require a bunch of dependencies during the build process. This is the only third party dependency we have (aside from Lwt and Yojson). 
 
 Next, a simple make compile should do in order to compile the project. 
 
@@ -12,6 +12,6 @@ Next, for each utop instance for each server, run st #### where #### is the port
 
 Next, open one last utop instance to run the client server - run start_client () 
 
-Then lastly, go to the ReactJS frontend on localhost:3000 in your favorite browser, then enter localhost:3001 (to connect to the client server), and you should be able to send new log values to the server. 
+Then lastly, go to the ReactJS frontend on localhost:3000 in your favorite browser, then enter localhost:3001 (to connect to the client server), and you should be able to send new log values (integers) to the server. 
 
 Logs of the servers should be in the utop console, although the followers are probably being spammed by heartbeats. 
