@@ -151,8 +151,8 @@ let update_neighbors ips id =
   serv_state.neighboring_ips <- ips;
   serv_state.id <- id
 
-(* [send_msg str oc] sends the string message [msg] to the server connected by
- * output channel [oc] *)
+(* [send_msg str oc] is a Leader-side function that sends the string message 
+ * [msg] to the Follower connected by output channel [oc] *)
 let send_msg str oc =
   print_endline ("sending: "^str);
   ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
@@ -174,8 +174,9 @@ let nindex_from_id id =
   | None -> -1
   | Some i -> i
 
-(* [oc] is the output channel to send to a server with an ip [ip] *)
-let req_append_entries (msg : append_entries_req) (ip : string) oc =
+(* [req_append_entries msg ip oc] is a Leader-side function that sends an
+ * AppendEntries Request to the Follower at output channel [oc] *)
+let req_append_entries (msg : append_entries_req) oc =
     let string_entries = List.map (fun x -> stringify_e x) msg.entries in
     let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
     let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
@@ -196,8 +197,8 @@ let req_append_entries (msg : append_entries_req) (ip : string) oc =
 
     send_msg json oc
 
-(*[res_append_entries ae_res oc] sends the stringified append entries response
- * [ae_res] to the output channel [oc]*)
+(* [res_append_entries ae_res oc] is a Follower-side function that sends the 
+ * stringified append entries response [ae_res] to the output channel [oc] *)
 let res_append_entries (ae_res:append_entries_res) oc =
     if (not serv_state.is_server) then Lwt.return(()) else
     let json =
@@ -210,8 +211,7 @@ let res_append_entries (ae_res:append_entries_res) oc =
     send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
- * - requires: [entries] has at least one entry in it
- *)
+ * - requires: [entries] has at least one entry in it *)
 let json_es (entries): entry list =
     let json = Yojson.Basic.Util.to_list entries in
     let assoc_list = List.map (fun x -> Yojson.Basic.Util.to_assoc x) (json) in
@@ -234,8 +234,9 @@ let json_es (entries): entry list =
     let ocaml_entries = List.map extract_record assoc_list in
     ocaml_entries
 
-(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
- * partially applied function [f], which is assumed to be one of the following:
+(* [send_rpcs f] is a Leader-side function that recursively sends RPCs to every
+ * ip in [ips] using the partially applied function [f], which is assumed to be
+ * one of the following:
  * [req_append_entries msg]
  * [req_request_vote msg] *)
 let rec send_rpcs f =
@@ -246,8 +247,9 @@ let rec send_rpcs f =
       | (ic, oc)::t -> f oc; send_to_ocs t in
     send_to_ocs lst_o
 
-(* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
- * index [pli] with entry term [plt]; else false *)
+(* [mismatch_log l pli plt] is a Follower-side function that returns true if log
+ * [l] doesnt contain an entry at index [pli] with entry term [plt]; 
+ * else false *)
 let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
     (* returns nth entry of the log *)
     if (List.length my_log <= 1) then false
@@ -257,8 +259,9 @@ let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
         | None -> true
         | Some (_,e) -> if e.entry_term = prev_log_term then (print_endline "terms"; false) else true
 
-(* [process_conflicts entries] goes through the server's log and removes entries
- * that conflict (same index different term) with those in [entries] *)
+(* [process_conflicts entries] is a Follower-side function that goes through the
+ * server's log and removes entries that conflict (same index different term) 
+ * with those in [entries] *)
 let process_conflicts entries =
     (* [does_conflict e1 e2] returns true if e1 has a different term than e2
      * -requires e1 and e2 to have the same index *)
@@ -289,9 +292,9 @@ let process_conflicts entries =
     let n_log = iter_entries entries old_log in
     serv_state.log <- n_log
 
-(* [append_new_entries entries] adds the new entries to the log
- * the entries must be in reverse chronological order as with the log
- *)
+(* [append_new_entries entries] is a Follower-side function that adds the new 
+ * entries to the log. The entries must be in reverse chronological order as 
+ * with the log *)
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
     let rec append_new (entries: entry list):unit =
@@ -317,8 +320,8 @@ let rec print_lst () = function
     | h::t -> match h with
         | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
 
-(* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
- * output channel [oc] *)
+(* [send_heartbeat oc ()] is a Leader-side function that sends one heartbeat to 
+ * the Follower server corresponding to output channel [oc] *)
 let rec send_heartbeat oc () =
     let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
     let int_entry_tuple =
@@ -350,13 +353,12 @@ let rec send_heartbeat oc () =
         match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
         | Some (idd, (i, oo)) -> idd
         | None -> "" in
-        List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
+        List.iter (fun (oc, rpc) -> req_append_entries rpc oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
-(* [create_rpc msg i t] creates an rpc to be sent to the servers based on the [msg]
- * containing the value the client wants to add as well as the leader's term and
- * the index of the entry in the log. Only the leader should call this function
- *)
+(* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
+ * to the servers based on the [msg] containing the value the client wants to 
+ * add as well as the leader's term and the index of the entry in the log. *)
 let create_rpc msg id p_log_idx p_log_term =
     (* let p_log_idx = get_p_log_idx () in *)
     (* let p_log_term = get_p_log_term () in *)
@@ -381,9 +383,10 @@ let create_rpc msg id p_log_idx p_log_term =
         entries = entries_;
         leader_commit = serv_state.commit_index
     }
-(* [force_conform id] forces server with id [id] to conform to the leader's log
- * if there is an inconsistency between the logs (aka the AERes success would be
- * false) *)
+
+(* [force_conform id] is a Leader-side function that forces a Follower server 
+ * with id [id] to conform to the leader's log if there is an inconsistency 
+ * between the logs (aka the AERes success would be false) *)
 let force_conform id =
     let ni = nindex_from_id id in
     (* update the nextIndex for this server to be ni - 1 *)
@@ -392,9 +395,9 @@ let force_conform id =
     serv_state.next_index_lst <- (id, ni-1)::new_indices;
     ()
 
-(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
- * updates its matchIndex in this server's matchIndex list
- * -requires the server of [oc] to have responded to an AEReq with true *)
+(* [update_matchIndex oc] is a Leader-side function that finds the id of the 
+ * server corresponding to [oc] and updates its matchIndex in this server's
+ * matchIndex list *)
 let rec update_match_index oc =
     match (id_from_oc !channels oc) with
     | None -> failwith "uh wtf"
@@ -415,16 +418,18 @@ let rec update_match_index oc =
         in
         apply [] serv_state.match_index_lst id; ()
 
-(* [update_next_index ] is only used by the leader *)
+(* [update_next_index ] is a Leader-side function that updates the next_index
+ * for a given Follower server connected to [oc] *)
 let update_next_index oc =
     print_endline " update next index";
     let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
     serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
 
-(* [update_commit_index ()] updates the commit_index for the Leader by finding an
- * N such that N > commit_index, a majority of matchIndex values >= N, and the
- * term of the Nth entry in the leader's log is equal to curr_term *)
+(* [update_commit_index ()] is a Leader-side function that updates the 
+ * commit_index for the Leader by finding an N such that N > commit_index, a 
+ * majority of matchIndex values >= N, and the term of the Nth entry in the 
+ * leader's log is equal to curr_term *)
 let update_commit_index () =
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
@@ -450,6 +455,8 @@ let update_commit_index () =
     assert (n_ci >= old_ci);
     serv_state.commit_index <- n_ci; ()
 
+(* [check_majority ()] is a Leader-side function that checks if a majority for a
+ * specific entry index has been reached, and if so, updates the commit_index. *)
 let check_majority () =
         let total_num_servers = List.length serv_state.neighboring_ips in
         print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
@@ -489,13 +496,18 @@ let read_neighboring_ips port_num =
   in
   process_file (Pervasives.open_in "ips.txt")
 
+(* [req_request_vote ballot oc] is a Candidate-side function that sets a
+ * RequestVote Request to the Follower at output channel [oc] with a ballot
+ * [ballot] containing the information necessary for the Follower to make a 
+ * vote decision. *)
 let req_request_vote ballot oc =
   let json =
     (* TODO: fix this to be less than 80 characters *)
     "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
   in send_msg json oc
 
-(* [res_request_vote msg oc] handles receiving a vote request message *)
+(* [res_request_vote msg oc] is a Follower-side function that handles receiving 
+ * a vote request message [msg] from the Candidate at output channel [oc] *)
 let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
     let continue =
@@ -520,6 +532,8 @@ let res_request_vote msg oc =
          in send_msg json oc
     | None -> failwith "kek" *)
 
+(* [send_heartbeats ()] is a Leader-side function that sends heartbeats to all
+ * the Followers *)
 let send_heartbeats () =
   let lst_o = List.map (fun (ip, chans) -> chans) !channels in
   let rec send_to_ocs lst =
@@ -575,8 +589,9 @@ let process_leader_death () =
     print_endline (string_of_int (List.length !channels));
     serv_state.leader_id <- ""; ()
 
-(* [start_election ()] starts the election for this server by incrementing its
- * term and sending RequestVote RPCs to every other server in the clique *)
+(* [start_election ()] is a Follower-side function that starts the election for
+ * this server by incrementing its term and sending RequestVote RPCs to every 
+ * other server in the clique *)
 let rec start_election () =
   print_endline "A new election has begun!------------------------------------";
   (* increment term and vote for self *)
@@ -594,8 +609,8 @@ let rec start_election () =
   print_endline "Sending votes!";
   send_rpcs (req_request_vote ballot);
 
-(* [act_leader ()] executes all leader responsibilities, namely sending RPCs
- * and listening for client requests
+(* [act_leader ()] is a Leader-side function that executes all leader 
+ * responsibilities, namely sending RPCs and listening for client requests
  *
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
@@ -606,10 +621,8 @@ and act_leader () =
   print_endline ("My heartbeat: " ^ string_of_float (serv_state.heartbeat));
   send_heartbeats (); ()
 
-(* [init_leader ()] initializes a server to the leader state. This involves
- * building the leader's match_index_lst and next_index_lst, and setting the
- * next index before acting as leader
- *)
+(* [init_leader ()] is a Leader-side function that initializes the state to be
+ * ready for Leader functions *)
 and init_leader () =
   let rec build_match_index build ips =
     match ips with
@@ -630,8 +643,9 @@ and init_leader () =
   build_next_index [] serv_state.neighboring_ips n_idx;
   act_leader ();
 
-(* [act_candidate ()] executes all candidate responsibilities, namely sending
- * vote requests and ending an election as a winner/loser/stall
+(* [act_candidate ()] is a Candidate-side function that executes all candidate 
+ * responsibilities, namely sending vote requests and ending an election as a 
+ * winner/loser/stall
  *
  * if a candidate receives a client request, they will reply with an error *)
 and act_candidate () =
