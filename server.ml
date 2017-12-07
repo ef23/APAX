@@ -103,7 +103,6 @@ let leader_ip = ref ""
 let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
 let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
 let (body_ws : Cohttp_lwt_body.t option ref) = ref None
-let num_clients = 1
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -315,8 +314,14 @@ let rec append_new_entries (entries : entry list) : unit =
     in
     append_new entries
 
+let rec print_lst () = function
+    | [] -> print_endline "endlist"
+    | h::t -> match h with
+        | {value=v; entryTerm = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
+        | _ -> failwith "wot"
+
 let rec send_heartbeat oc () =
-    (* print_endline "sending heartbeat"; *)
+    print_lst () (List.map (fun (x,y) -> y) serv_state.log);
     let temp_str = "kek" in
     Lwt_io.write_line oc (
         "{" ^
@@ -769,12 +774,10 @@ let handle_ae_res msg oc =
     | [] -> 1 in
 
     let rec add_to_index_responses ind_to_add ind_to_stop =
-    if (ind_to_add >= ind_to_stop)
-    then ()
+    if (ind_to_add >= ind_to_stop) then ()
     else
     (index_responses := (ind_to_add, 0)::!index_responses;
     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
-
     add_to_index_responses num_to_add (last_entry_serv_committed);
 
     index_responses := List.map (fun (ind, count) ->
@@ -809,7 +812,6 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;
-    print_endline ("num clients " ^ (string_of_int num_clients));
     if serv_state.role <> Leader && !vote_counter >
         (((List.length serv_state.neighboring_ips)) / 2)
             then win_election ()
@@ -878,7 +880,7 @@ let handle_message msg oc =
         let new_idx = (List.length old_log) + 1 in
         serv_state.log <- (new_idx,new_entry)::old_log;
 
-        let output_channels_to_rpc = 
+        let output_channels_to_rpc =
             List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
         get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
