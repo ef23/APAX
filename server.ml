@@ -434,12 +434,12 @@ let update_commit_index () =
     serv_state.commit_index <- n_ci; ()
 
 let check_majority () =
-        let total_num_servers = List.length serv_state.neighboring_ips in
-        let index_to_commit =
-        match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-        | None -> serv_state.commit_index
-        | Some (ind, count) -> ind in
-        serv_state.commit_index <- index_to_commit
+    let total_num_servers = List.length serv_state.neighboring_ips in
+    let index_to_commit =
+    match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
+    | None -> serv_state.commit_index
+    | Some (ind, count) -> ind in
+    serv_state.commit_index <- index_to_commit
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
