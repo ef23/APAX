@@ -181,6 +181,7 @@ let stringify_e (e:entry): string =
   in json
 
 let nindex_from_id ip =
+    print_endline ip;
     match List.assoc_opt ip serv_state.next_index_lst with
     | None -> print_endline "adsfjdkglkjg AHAHAHHAA"; -1
     | Some i -> i
@@ -584,14 +585,14 @@ and act_leader () =
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
-        | [] -> serv_state.match_index_lst <- build; ()
+        | [] -> serv_state.match_index_lst <- build
         | (inum,port)::t ->
             let nbuild = (inum^":"^(string_of_int port), 0)::build in
             build_match_index nbuild t in
 
     let rec build_next_index build ips n_idx =
         match ips with
-        | [] -> serv_state.next_index_lst <- build; ()
+        | [] -> serv_state.next_index_lst <- build
         | (inum,port)::t ->
             let nbuild = (inum^":"^(string_of_int port), n_idx)::build in
             build_match_index nbuild t in
@@ -600,6 +601,11 @@ and init_leader () =
     build_match_index [] serv_state.neighboring_ips;
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboring_ips n_idx;
+
+    assert (List.length serv_state.neighboring_ips > 0);
+    assert (List.length serv_state.match_index_lst > 0);
+    assert (List.length serv_state.next_index_lst > 0);
+
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
