@@ -715,11 +715,14 @@ let handle_ae_req msg oc =
         current_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
-    process_conflicts entries; (* 3 *)
-    append_new_entries entries; (* 4 *)
-    if leader_commit > serv_state.commit_index then
+    if (success_bool) then
+        (process_conflicts entries; (* 3 *)
+        append_new_entries entries; (* 4 *)
+        if leader_commit > serv_state.commit_index then
         (let new_commit = min leader_commit (get_p_log_idx ()) in
         serv_state.commit_index <- new_commit); (* 5 *)
+    );
+
     res_append_entries ae_res oc
 
 let handle_ae_res msg oc =
