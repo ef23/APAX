@@ -106,55 +106,56 @@ let (body_ws : Cohttp_lwt_body.t option ref) = ref None
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
+
 (* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
  * finds the id corresponding to the channel [oc] *)
 let rec id_from_oc cl oc =
-    match cl with
-    | [] -> None
-    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+  match cl with
+  | [] -> None
+  | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
-    match serv_state.log with
-    | [] -> None
-    | (_, e)::_ -> Some e
+  match serv_state.log with
+  | [] -> None
+  | (_, e)::_ -> Some e
 
 (* [get_p_log_idx ()] returns the 1-based index of the most recently added
  * entry in the log *)
 let get_p_log_idx () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.index
+  match last_entry () with
+  | None -> 0
+  | Some e -> e.index
 
 (* [get_p_log_term ()] returns the 1-based term of the most recently added
  * entry in the log *)
 let get_p_log_term () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.entry_term
+  match last_entry () with
+  | None -> 0
+  | Some e -> e.entry_term
 
 (* [full_addr_str p] returns the concatenation of this server's IP and port *)
 let full_addr_str port_num =
-    Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
+  Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
 
 (* [change_heartbeat ()] changes the current server's heartbeat to a randomized,
  * value on a fixed interval *)
 let change_heartbeat () =
-    let new_heartbeat = generate_heartbeat () in
-    serv_state.heartbeat <- new_heartbeat
+  let new_heartbeat = generate_heartbeat () in
+  serv_state.heartbeat <- new_heartbeat
 
 (* [update_neighbors ips id] updates this server's neighboring IPs list with
  * [ips] TODO more on this later *)
 let update_neighbors ips id =
-    serv_state.neighboring_ips <- ips;
-    serv_state.id <- id
+  serv_state.neighboring_ips <- ips;
+  serv_state.id <- id
 
 (* [send_msg str oc] sends the string message [msg] to the server connected by
  * output channel [oc] *)
 let send_msg str oc =
-    print_endline ("sending: "^str);
-    ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
+  print_endline ("sending: "^str);
+  ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
 
 (* [stringify_e e] converts an entry record [e] to a string *)
 let stringify_e (e:entry): string =
@@ -169,9 +170,9 @@ let stringify_e (e:entry): string =
 (* [nindex_from_id id] takes a server id [id] and the next_index_lst and
  * finds the nextIndex of server [id] *)
 let nindex_from_id id =
-    match List.assoc_opt id serv_state.next_index_lst with
-    | None -> -1
-    | Some i -> i
+  match List.assoc_opt id serv_state.next_index_lst with
+  | None -> -1
+  | Some i -> i
 
 (* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
@@ -489,20 +490,23 @@ let read_neighboring_ips port_num =
   process_file (Pervasives.open_in "ips.txt")
 
 let req_request_vote ballot oc =
-    let json =
-      "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
-    in send_msg json oc
+  let json =
+    (* TODO: fix this to be less than 80 characters *)
+    "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
+  in send_msg json oc
 
 (* [res_request_vote msg oc] handles receiving a vote request message *)
 let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
-    let continue = match serv_state.voted_for with
-                    | None -> true
-                    | Some id -> print_endline id; print_endline candidate_id; id=candidate_id in
+    let continue =
+      match serv_state.voted_for with
+      | None -> true
+      | Some id -> id=candidate_id in
     let otherTerm = msg |> member "term" |> to_int in
     let vote_granted = continue && otherTerm >= serv_state.curr_term in
     if (vote_granted) then serv_state.voted_for <- (Some candidate_id);
     let json =
+            (* TODO: fix this to be 80 characters *)
           "{\"type\": \"vote_res\", \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match serv_state.lastEntry with
@@ -517,30 +521,30 @@ let res_request_vote msg oc =
     | None -> failwith "kek" *)
 
 let send_heartbeats () =
-    let lst_o = List.map (fun (ip, chans) -> chans) !channels in
-    let rec send_to_ocs lst =
-      match lst with
-      | (ic, oc)::t ->
-        begin
-          print_endline "in send heartbeat match";
-          let start_timer oc_in =
-          Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
-          in
-          ignore (Thread.create start_timer oc); send_to_ocs t;
-        end
-      | [] -> () in
-    print_endline "number of ocs";
-    print_endline (string_of_int (List.length lst_o));
+  let lst_o = List.map (fun (ip, chans) -> chans) !channels in
+  let rec send_to_ocs lst =
+    match lst with
+    | (ic, oc)::t ->
+      begin
+        print_endline "in send heartbeat match";
+        let start_timer oc_in =
+        Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
+        in
+        ignore (Thread.create start_timer oc); send_to_ocs t;
+      end
+    | [] -> () in
+  print_endline "number of ocs";
+  print_endline (string_of_int (List.length lst_o));
 
-    send_to_ocs lst_o
+  send_to_ocs lst_o
 
 (* [act_all ()] is a simple check that all servers perform regularly, regardless
  * of role. It should be called at the start of every iteration of one of the
  * act functions for roles *)
 let act_all () =
-    let la = serv_state.last_applied in
-    if serv_state.commit_index > la then
-    (serv_state.last_applied <- la + 1); ()
+  let la = serv_state.last_applied in
+  if serv_state.commit_index > la then
+  (serv_state.last_applied <- la + 1); ()
 
 (* [process_leader_death ()] handles leader death by removing the leader from
  * neighboring_ips in order to reflect that the server has gone done in order
@@ -574,33 +578,33 @@ let process_leader_death () =
 (* [start_election ()] starts the election for this server by incrementing its
  * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
-    print_endline "election started!";
-    (* increment term and vote for self *)
-    let curr_term = serv_state.curr_term in
-    serv_state.curr_term <- curr_term + 1;
-    serv_state.voted_for <- (Some serv_state.id);
-    vote_counter := 1;
-    (* ballot is a vote_req *)
-    let ballot = {
-        term = serv_state.curr_term;
-        candidate_id = serv_state.id;
-        last_log_index = get_p_log_idx ();
-        last_log_term = get_p_log_term ();
-    } in
-    print_endline "sending rpcs...";
-    send_rpcs (req_request_vote ballot);
+  print_endline "A new election has begun!------------------------------------";
+  (* increment term and vote for self *)
+  let curr_term = serv_state.curr_term in
+  serv_state.curr_term <- curr_term + 1;
+  serv_state.voted_for <- (Some serv_state.id);
+  vote_counter := 1;
+  (* ballot is a vote_req *)
+  let ballot = {
+    term = serv_state.curr_term;
+    candidate_id = serv_state.id;
+    last_log_index = get_p_log_idx ();
+    last_log_term = get_p_log_term ();
+  } in
+  print_endline "Sending votes!";
+  send_rpcs (req_request_vote ballot);
 
 (* [act_leader ()] executes all leader responsibilities, namely sending RPCs
  * and listening for client requests
  *
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
-    (* start thread to periodically send heartbeats *)
-    print_endline "I am a leader----------------------------------------------";
-    update_commit_index ();
-    act_all();
-    print_endline ("My heartbeat: " ^ string_of_float (serv_state.heartbeat));
-    send_heartbeats (); ()
+  (* start thread to periodically send heartbeats *)
+  print_endline "I am a leader----------------------------------------------";
+  update_commit_index ();
+  act_all();
+  print_endline ("My heartbeat: " ^ string_of_float (serv_state.heartbeat));
+  send_heartbeats (); ()
 
 (* [init_leader ()] initializes a server to the leader state. This involves
  * building the leader's match_index_lst and next_index_lst, and setting the
@@ -661,7 +665,8 @@ and act_candidate () =
  * server-side function
  *)
 and init_candidate () =
-    act_candidate ()
+  print_endline "Initialized as candidate!";
+  act_candidate ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -670,57 +675,57 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-    print_endline "I am a follower--------------------------------------------";
-    print_lst () (List.map (fun (x,y) -> y) serv_state.log);
-    print_endline ("My heartbeat " ^ (string_of_float serv_state.heartbeat));
-    serv_state.role <- Follower;
+  print_endline "I am a follower--------------------------------------------";
+  print_lst () (List.map (fun (x,y) -> y) serv_state.log);
+  print_endline ("My heartbeat " ^ (string_of_float serv_state.heartbeat));
+  serv_state.role <- Follower;
 
-    act_all ();
-    (* check if the timeout has expired, and that it has voted for no one *)
-    print_endline "hearbteat for";
-    print_endline (string_of_bool serv_state.received_heartbeat);
-    print_endline "voted for";
-    print_endline (string_of_bool (serv_state.voted_for = None));
-    if (serv_state.voted_for = None && serv_state.received_heartbeat = false)
-    then begin
-            process_leader_death ();
-            serv_state.role <- Candidate;
-            init_candidate ()
-        end
-    (* if condition satisfied, continue being follower, otherwise start elec *)
-    else begin
-            serv_state.received_heartbeat <- false;
-            Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat)) (fun () -> act_follower ())
-        end
-
+  act_all ();
+  (* check if the timeout has expired, and that it has voted for no one *)
+  print_endline "hearbteat for";
+  print_endline (string_of_bool serv_state.received_heartbeat);
+  print_endline "voted for";
+  print_endline (string_of_bool (serv_state.voted_for = None));
+  if (serv_state.voted_for = None && serv_state.received_heartbeat = false)
+  then begin
+    process_leader_death ();
+    serv_state.role <- Candidate;
+    init_candidate ()
+  end
+  (* if condition satisfied, continue being follower, otherwise start elec *)
+  else begin
+    serv_state.received_heartbeat <- false;
+    Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat))
+                       (fun () -> act_follower ())
+  end
 (* [init_follower ()] initializes a server to act as a follower by beginning a
  * timeout cycle the same length as the server's heartbeat. This is a server
  * side function, the client should never run this.
  *)
 and init_follower () =
-  print_endline "init follower";
+  print_endline "Initialized as follower!";
   Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
                      (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
 and win_election () =
-    (* transition to Leader role *)
-    serv_state.role <- Leader;
-    (* send heartbeats *)
-    init_leader ()
+  (* transition to Leader role *)
+  serv_state.role <- Leader;
+  (* send heartbeats *)
+  init_leader ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
 and lose_election () =
-    (* transition to Follower role *)
-    serv_state.role <- Follower;
-    act_follower ()
+  (* transition to Follower role *)
+  serv_state.role <- Follower;
+  act_follower ()
 
 (* [terminate_election ()] executes when timeout occurs in the middle of an
  * election with no resolution (i.e. no one wins or loses) *)
 and terminate_election () =
-    start_election ()
+  start_election ()
 
 (* [id_from_oc cl oc] grabs the server id of the given [oc] in a list of [cl]
  * Returns string option.
