@@ -343,37 +343,28 @@ let rec send_heartbeat oc () =
  *)
 let create_rpc msg id =
     let p_log_idx = get_p_log_idx () in
-        let p_log_term = get_p_log_term () in
-        let new_entry = {
-                value = msg |> member "value" |> to_int;
-                entryTerm = serv_state.curr_term;
-                index = p_log_idx + 1;
-            } in
+    let p_log_term = get_p_log_term () in
 
-        let old_log = serv_state.log in
-        let new_idx = (List.length old_log) + 1 in
-        serv_state.log <- (new_idx,new_entry)::old_log;
-
-        let e = [] in
-        let next_index = nindex_from_id id in
-        let entries_ =
-            let rec add_relevant es = function
-            | [] -> es
-            | (i, e)::t ->
-                if i >= next_index
-                then add_relevant (e::es) t
-                else add_relevant es t
-            in
-            add_relevant e (List.rev serv_state.log)
+    let e = [] in
+    let next_index = nindex_from_id id in
+    let entries_ =
+        let rec add_relevant es = function
+        | [] -> es
+        | (i, e)::t ->
+            if i >= next_index
+            then add_relevant (e::es) t
+            else add_relevant es t
         in
-        {
-            ap_term = serv_state.curr_term;
-            leader_id = serv_state.id;
-            prev_log_index = p_log_idx;
-            prev_log_term = p_log_term;
-            entries = entries_;
-            leader_commit = serv_state.commit_index
-        }
+        add_relevant e (List.rev serv_state.log)
+    in
+    {
+        ap_term = serv_state.curr_term;
+        leader_id = serv_state.id;
+        prev_log_index = p_log_idx;
+        prev_log_term = p_log_term;
+        entries = entries_;
+        leader_commit = serv_state.commit_index
+    }
 (* [force_conform id] forces server with id [id] to conform to the leader's log
  * if there is an inconsistency between the logs (aka the AERes success would be
  * false) *)
@@ -887,9 +878,20 @@ let handle_message msg oc =
         send_msg res oc; ()
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
-            (* create the append_entries_rpc *)
+        (* create the append_entries_rpc *)
+
+        let new_entry = {
+                value = msg |> member "value" |> to_int;
+                entryTerm = serv_state.curr_term;
+                index = (get_p_log_idx ()) + 1;
+            } in
+
+        let old_log = serv_state.log in
+        let new_idx = (List.length old_log) + 1 in
+        serv_state.log <- (new_idx,new_entry)::old_log;
+
         let output_channels_to_rpc = 
-        List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
+            List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
         get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
