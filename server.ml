@@ -345,11 +345,11 @@ let rec send_heartbeat oc () =
     match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
     | Some (idd, (i, oo)) -> idd
     | None -> "" in
-  List.iter
-    (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())
-    !get_ae_response_from;
-  Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
-    (fun () -> send_heartbeat oc ())
+      List.iter (fun (oc, rpc) -> 
+        ignore (req_append_entries rpc (id_of_oc oc) oc); ()) 
+        !get_ae_response_from;
+      Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) 
+        (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
  * to the servers based on the [msg] containing the value the client wants to
@@ -754,72 +754,66 @@ let handle_ae_req msg oc =
 (* [handle_ae_res msg oc] is a Leader-side function that handles an
  * AppendEntries Response [msg] from a Follower at output channel [oc] *)
 let handle_ae_res msg oc =
-  let curr_term = msg |> member "curr_term" |> to_int in
-  let success = msg |> member "success" |> to_bool in
+    let curr_term = msg |> member "curr_term" |> to_int in
+    let success = msg |> member "success" |> to_bool in
 
-  let responder_id = (
-    match (id_from_oc !channels oc) with
-    | None -> failwith "not possible"
-    | Some x -> x
-  ) in
+    handle_precheck curr_term;
 
-  handle_precheck curr_term;
+    let servid = match (id_from_oc !channels oc) with
+        | None -> "should be impossible"
+        | Some s -> s in
 
-  let servid = match (id_from_oc !channels oc) with
-    | None -> "should be impossible"
-    | Some s -> s in
+    if (success) then
+    begin
+        match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
+        | None -> ()
+        | Some (o,r) ->
+            let last_entry_serv_committed =
+                begin try (List.hd (r.entries)).index with
+                    | _ -> failwith "Impossible. Leader should always have at least one entry to send."
+                end in
 
-  if success then
-  begin
-    match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l)
-      !get_ae_response_from with
-    | None -> ()
-    | Some (o,r) ->
-      let last_entry_serv_committed =
-        begin try (List.hd (r.entries)).index with
-          | _ -> failwith "Leader should always have at least 1 entry to send."
-        end in
+            let latest_ind_for_server =
+                match List.assoc_opt servid serv_state.match_index_lst with
+                | None -> (*serv_state.matchIndexList <-
+                (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*)
+                failwith "should not occur because we already update match index?"
+                | Some i -> i in
 
-      let latest_ind_for_server =
-        match List.assoc_opt servid serv_state.match_index_lst with
-        | None ->
-        failwith "should not occur because we already update match index?"
-        | Some i -> i in
+            (*index responses is in decreasing log index, and it is (ind of entry, num servers
+            that contain that entry)*)
+            let num_to_add = match !index_responses with
+                | (indd, co)::t -> indd + 1
+                | [] -> 1 in
+            let rec add_to_index_responses ind_to_add ind_to_stop =
+                if (ind_to_add > ind_to_stop) then ()
+                else
+                    (index_responses := (ind_to_add, 1)::!index_responses;
+                    add_to_index_responses (ind_to_add + 1) ind_to_stop) in
 
-      (*index responses is in decreasing log index, and it is
-      (ind of entry, num servers that contain that entry)*)
-      let num_to_add = match !index_responses with
-        | (indd, co)::t -> indd + 1
-        | [] -> 1 in
-      let rec add_to_index_responses ind_to_add ind_to_stop =
-        if (ind_to_add > ind_to_stop) then ()
-        else
-          (index_responses := (ind_to_add, 1)::!index_responses;
-          add_to_index_responses (ind_to_add + 1) ind_to_stop) in
+            add_to_index_responses num_to_add (last_entry_serv_committed);
+            assert (List.length !index_responses > 0);
+            index_responses := ((List.map (fun (ind, count) ->
+                            if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
+                            then (ind, (count + 1)) else (ind, count)) !index_responses));
+            check_majority ();
+            get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+            update_match_index oc;
+            update_next_index oc
+    end
+    else begin
+        force_conform servid;
+        let serv_id = match id_from_oc !channels oc with
+        | Some id -> id
+        | None -> failwith "oc should have corresponding id" in
+        let pli = get_p_log_idx () in
+        let plt = get_p_log_term () in
+        let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
+        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
+        check_majority ();
+        get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+    end
 
-      add_to_index_responses num_to_add (last_entry_serv_committed);
-      assert (List.length !index_responses > 0);
-      index_responses :=
-        ((List.map (fun (ind, count) ->
-        if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
-        then (ind, (count + 1)) else (ind, count)) !index_responses));
-      check_majority ();
-      get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
-      update_match_index oc;
-      update_next_index oc
-  end
-  else begin
-      force_conform servid;
-      let serv_id = match id_from_oc !channels oc with
-      | Some id -> id
-      | None -> failwith "oc should have corresponding id" in
-      let pli = get_p_log_idx () in
-      let plt = get_p_log_term () in
-      let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
-      get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
-      check_majority ();
-      get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
-  end
 
 (* [handle_vote_req msg oc] is a Follower-side function that handles receiving
  * a vote request from a candidate. This will generally set the server's state

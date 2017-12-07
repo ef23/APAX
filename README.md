@@ -80,8 +80,8 @@ The core features (as stated in the system description) are listed, along with t
 - Socket networking for distributed servers and clients: Maria, Janice, Eric
 - User-friendly interface for clients to connect and dynamic leader redirection for client-side access: Eric
 - Randomized timing for leader election and stability: Andy, Eric, Maria, Janice
-- Log replication for predictable, safe state machines: Andy, Janice
-- Leader election for when the current leader fails: Andy, Eric
+- Log replication for predictable, safe state machines: Andy, Janice, Maria
+- Leader election for when the current leader fails: Andy, Eric, Maria, Janice
 
 
 Hours were evenly distributed due to allocation of work hours in which everyone would be available to meet. They are distributed as follows:
