@@ -210,10 +210,11 @@ let req_append_entries (msg : append_entries_req) (ip : string) oc =
 (*[res_append_entries ae_res oc] sends the stringified append entries response
  * [ae_res] to the output channel [oc]*)
 let res_append_entries (ae_res:append_entries_res) oc =
+    if (not serv_state.is_server) then Lwt.return(()) else
     let json =
       "{" ^
         "\"type\":" ^ "\"appd_res\"" ^ "," ^
-        "\"success\":" ^ string_of_bool ae_res.success ^"," ^
+        "\"success\":" ^ string_of_bool ae_res.success ^ "," ^
         "\"curr_term\":"  ^ string_of_int ae_res.curr_term ^
       "}"
     in
@@ -643,6 +644,7 @@ and init_candidate () =
  *)
 and act_follower () =
     print_endline "act follower";
+    print_lst () (List.map (fun (x,y) -> y) serv_state.log);
     print_endline ("my heartbeat " ^ (string_of_float serv_state.heartbeat));
     serv_state.role <- Follower;
 
@@ -721,7 +723,7 @@ let handle_ae_req msg oc =
     in
     print_endline (string_of_bool success_bool);
     let ae_res = {
-        success = success_bool;
+        success = true; (*before was success_bool*)
         curr_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
@@ -867,19 +869,19 @@ and handle_ae_res msg oc =
     let servid = match (id_from_oc !channels oc) with
     | None -> "should be impossible"
     | Some s -> s in
-
+    print_endline (servid ^"SERVID"); print_endline (string_of_int (List.length !get_ae_response_from));
     if (success) then
-    (let rpc_mes = try List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with | _ -> failwith "finding error oops" in
-
-    let last_entry_serv_committed =
-    match rpc_mes with
-    | (o, r) ->
-        begin
-            try (List.hd (r.entries)).index with
-            | _ -> failwith "Impossible. Leader should always have at least one entry to send."
-        end
-    in
-
+    begin
+    match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
+    | None -> ()
+    | Some s ->
+        let last_entry_serv_committed =
+        match s with
+        | (o, r) ->
+            begin
+                try (List.hd (r.entries)).index with
+                | _ -> failwith "Impossible. Leader should always have at least one entry to send."
+            end in
     let latest_ind_for_server =
     match List.assoc_opt servid serv_state.match_index_lst with
     | None -> (*serv_state.matchIndexList <-
@@ -903,7 +905,8 @@ and handle_ae_res msg oc =
     index_responses := List.map (fun (ind, count) ->
     if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
     then (ind, (count + 1)) else (ind, count))
-    !index_responses) else
+    !index_responses
+    end else
     force_conform servid;
     let serv_id = match id_from_oc !channels oc with
     | Some id -> id
@@ -912,8 +915,10 @@ and handle_ae_res msg oc =
     get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
     let total_num_servers = List.length serv_state.neighboring_ips in
-    let index_to_commit_tup = try List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with | _ -> failwith "finding majority" in
-    let index_to_commit = fst index_to_commit_tup in
+    let index_to_commit =
+    match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
+    | None -> serv_state.commit_index
+    | Some (ind, count) -> ind in
     serv_state.commit_index <- index_to_commit
 
 and handle_vote_req msg oc =
