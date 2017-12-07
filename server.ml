@@ -192,6 +192,7 @@ let req_append_entries (msg : append_entries_req) (ip : string) oc =
       "}"
     in
     print_endline ("ENTRIES LENGTH LIST"^string_of_int (List.length msg.entries));
+
     send_msg json oc
 
 (*[res_append_entries ae_res oc] sends the stringified append entries response
@@ -435,6 +436,10 @@ let update_commit_index () =
 
 let check_majority () =
         let total_num_servers = List.length serv_state.neighboring_ips in
+        print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
+        assert (List.length !index_responses > 0);
+    (*     List.iter ((fun (ind, count) -> print_endline (string_of_int ind ^ ":" ^string_of_int count))
+    !index_responses); *)
         let index_to_commit =
         match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
         | None -> serv_state.commit_index
@@ -748,24 +753,26 @@ let handle_ae_res msg oc =
             update_match_index oc;
             update_next_index oc
         end;
-    if (not success) then (force_conform responder_id);
+    (* if (not success) then (force_conform responder_id); *)
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
 
-    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+
 
     let servid = match (id_from_oc !channels oc) with
         | None -> "should be impossible"
         | Some s -> s in
 
     print_endline (servid ^"SERVID"); print_endline (string_of_int (List.length !get_ae_response_from));
-    
-    if (success) then 
+
+    if (success) then
     begin
+        assert (List.length !get_ae_response_from > 0);
         match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
-        | None -> ()
+        | None -> print_endline ("IN NONE");()
         | Some (o,r) ->
+        print_endline ("IN SOME");
             let last_entry_serv_committed =
                 begin try (List.hd (r.entries)).index with
                     | _ -> failwith "Impossible. Leader should always have at least one entry to send."
@@ -783,20 +790,25 @@ let handle_ae_res msg oc =
             let num_to_add = match !index_responses with
                 | (indd, co)::t -> indd + 1
                 | [] -> 1 in
-
+            print_endline ("AFTER NUM TO ADD");
             let rec add_to_index_responses ind_to_add ind_to_stop =
-                if (ind_to_add >= ind_to_stop) then ()
+                if (ind_to_add > ind_to_stop) then ()
                 else
                     (index_responses := (ind_to_add, 0)::!index_responses;
                     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
-
+            assert (List.length !index_responses > 0);
+            print_endline ("AFTER ADD TO IND RESPONSES");
+            print_endline ("NUM TO ADD" ^ string_of_int num_to_add);
+            print_endline ("LAST ENTRY SERVE COMMITTED IND" ^ (string_of_int last_entry_serv_committed));
             add_to_index_responses num_to_add (last_entry_serv_committed);
 
-            index_responses := (List.map (fun (ind, count) ->
+            index_responses := ((List.map (fun (ind, count) ->
                             if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
-                            then (ind, (count + 1)) else (ind, count)) !index_responses);
+                            then (ind, (count + 1)) else (ind, count)) !index_responses));
+            print_endline ("CHCK MAJORITY IF");
 
-            check_majority ()
+            check_majority ();
+            get_ae_response_from := (List.remove_assq oc !get_ae_response_from)
     end
     else begin
         force_conform servid;
@@ -806,10 +818,12 @@ let handle_ae_res msg oc =
         let pli = get_p_log_idx () in
         let plt = get_p_log_term () in
         let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
-        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[])
-        check_majority ()
+        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
+        print_endline ("CHCK MAJORITY ELSE");
+        check_majority ();
+        get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
     end
-    
+
 let handle_vote_req msg oc =
     (* at this point, the current leader has died, so need to delete leader *)
     process_leader_death ();
