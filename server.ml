@@ -59,6 +59,7 @@ let serv_state = {
     is_server = true;
 }
 
+(* [get_my_addr ()] gets the current address of this host *)
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
@@ -68,9 +69,11 @@ let get_my_addr () =
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-
+(* keeps track of votes in the election *)
 let vote_counter = ref 0
 
+(* a string * (input_channel * output_channel) list
+ * mapping each server ID to its ic and oc *)
 let channels = ref []
 
 let listen_address = get_my_addr ()
@@ -117,31 +120,43 @@ let last_entry () =
     | [] -> None
     | (_, e)::_ -> Some e
 
+(* [get_p_log_idx ()] returns the 1-based index of the most recently added 
+ * entry in the log *)
 let get_p_log_idx () =
     match last_entry () with
     | None -> 0
     | Some e -> e.index
 
+(* [get_p_log_term ()] returns the 1-based term of the most recently added 
+ * entry in the log *)
 let get_p_log_term () =
     match last_entry () with
     | None -> 0
     | Some e -> e.entry_term
 
+(* [full_addr_str p] returns the concatenation of this server's IP and port *)
 let full_addr_str port_num =
     Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
 
+(* [change_heartbeat ()] changes the current server's heartbeat to a randomized,
+ * value on a fixed interval *)
 let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
     serv_state.heartbeat <- new_heartbeat
 
+(* [update_neighbors ips id] updates this server's neighboring IPs list with 
+ * [ips] TODO more on this later *)
 let update_neighbors ips id =
     serv_state.neighboring_ips <- ips;
     serv_state.id <- id
 
+(* [send_msg str oc] sends the string message [msg] to the server connected by
+ * output channel [oc] *)
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
 
+(* [stringify_e e] converts an entry record [e] to a string *)
 let stringify_e (e:entry): string =
   let json =
     "{" ^
@@ -178,16 +193,6 @@ let req_append_entries (msg : append_entries_req) (ip : string) oc =
     in
     print_endline ("ENTRIES LENGTH LIST"^string_of_int (List.length msg.entries));
     send_msg json oc
-
-(*
-
-    failwith
- "kinda same code as req_request_vote. sending json. entries usu just one. commit index is that of leader's state.
- listen for responses.
- - if responses are term and boolean succcesss (append entries rpc mli) then incr ref count of followers ok
- - then when majority, incr commit index
-
- " *)
 
 (*[res_append_entries ae_res oc] sends the stringified append entries response
  * [ae_res] to the output channel [oc]*)
@@ -310,6 +315,8 @@ let rec print_lst () = function
         | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
         | _ -> failwith "wot"
 
+(* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
+ * output channel [oc] *)
 let rec send_heartbeat oc () =
     print_lst () (List.map (fun (x,y) -> y) serv_state.log);
     let temp_str = "kek" in
@@ -402,7 +409,6 @@ let update_next_index oc =
 (* [update_commit_index ()] updates the commit_index for the Leader by finding an
  * N such that N > commit_index, a majority of matchIndex values >= N, and the
  * term of the Nth entry in the leader's log is equal to curr_term *)
-
 let update_commit_index () =
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
