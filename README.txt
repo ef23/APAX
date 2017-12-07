@@ -8,7 +8,7 @@ After this, we ran our servers and client server in `utop`. We supplied the ips 
 
 The following ports are reserved: 3000, 3001, 3002. This is for the client server (which interfaces with the web frontend client via websocket on 3001, the node server for React on 3000, and the socket for the client server on port 3002).
 
-Next, for each `utop` instance for each server, run `st ####` where `####` is the port number that corresponds to the servers' port numbers in `ips.txt`. It will look like each instance is hanging until every server is started and the client is connected.
+Next, for each `utop` instance for each server, run `st ####` where `####` is the port number that corresponds to the servers' port numbers in `ips.txt`. It will look like each instance is hanging (not printing anything) until every server is started and the client is connected.
 
 Next, open one last `utop` instance to run the client server - run `start_client ()`. The leader should soon be elected.
 
@@ -25,4 +25,4 @@ In the last `utop` instance, run `start_client ()`
 Next, run `npm start` in the last terminal after navigating to cd client/
 Open localhost:3000 in the browser, connect to localhost:3001 and then you can update values with int values.
 
-You can stop servers by exiting the terminal window.
+You can stop a server by pressing CTRL-C, pressing CTRL-D, then exiting the terminal window in the console whose server you want to stop.
