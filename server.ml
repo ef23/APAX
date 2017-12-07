@@ -319,6 +319,19 @@ let rec print_lst () = function
 (* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
  * output channel [oc] *)
 let rec send_heartbeat oc () =
+    let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
+    let int_entry_tuple = 
+        match List.nth_opt (serv_state.log) ind_to_send with 
+        | None -> (1, 
+            {value=0;
+            entry_term=(-1);
+            index=(-1)}
+        )
+        | Some x -> x in 
+    let string_entry = stringify_e (snd int_entry_tuple) in
+    let final_entries_str = "[" ^ string_entry  ^ "]" in
+
+
     print_lst () (List.map (fun (x,y) -> y) serv_state.log);
     print_endline (string_of_int serv_state.commit_index);
     ignore (Lwt_io.write_line oc (
@@ -328,7 +341,7 @@ let rec send_heartbeat oc () =
         "\"curr_term\":" ^ string_of_int serv_state.curr_term ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": \"\"," ^
+        "\"entries\": " ^ final_entries_str ^ "," ^
         "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
         "}"));
     ignore (Lwt_io.flush oc);
@@ -770,7 +783,6 @@ let handle_ae_res msg oc =
 
     if (success) then
     begin
-        assert (List.length !get_ae_response_from > 0);
         match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
         | None -> print_endline ("IN NONE");()
         | Some (o,r) ->
@@ -858,6 +870,9 @@ let process_heartbeat msg =
 
     (* if the leader ip that the client server has does not match current
      * leader id, update the leader ip *)
+    let one_entry_in_list = json_es (msg |> member "entries") in 
+    if (List.length one_entry_in_list > 0) then 
+    res_client_msg := string_of_int ((List.hd (one_entry_in_list)).value);
     if (not serv_state.is_server) && !leader_ip <> l_id then leader_ip := l_id;
 
     if leader_commit > serv_state.commit_index
