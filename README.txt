@@ -25,4 +25,4 @@ In the last `utop` instance, run `start_client ()`
 Next, run `npm start` in the last terminal after navigating to cd client/
 Open localhost:3000 in the browser, connect to localhost:3001 and then you can update values with int values.
 
-You can stop a server by pressing CTRL-C, pressing CTRL-D, then exiting the terminal window in the console whose server you want to stop.
+You can stop a server by pressing CTRL-C, pressing CTRL-D, then exiting the terminal window in the console whose server you want to stop. You can test stopping the leader server and it will still update values, and if you stop a follower, then it will work in cases where there are many servers (i.e. the leader will still have a majority from the initial number of servers)
