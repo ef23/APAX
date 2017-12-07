@@ -36,8 +36,8 @@ class App extends React.Component {
     } catch (e) {
       this.failWebsocket();
     }
-    this.ws.onopen = (x) => {
-      console.log("opened!");
+    this.ws.onclose = (x) => {
+      this.failWebsocket();
     }
     this.ws.onerror = (x) => {
       this.failWebsocket();
@@ -71,16 +71,22 @@ class App extends React.Component {
     this.setState({
       box_text: ""
     });
-    // try {
-      this.ws.send(this.state.box_text);
+    try {
+      if ((typeof parseInt(this.state.box_text))==="number") {
+        this.ws.send(this.state.box_text);
+        this.setState({
+          ws_page_msg: "Sent!"
+        });
+      } else {
+        this.setState({
+          ws_page_msg: "Error with sending message! Make sure it is an integer"
+        });
+      }
+    } catch(e) {
       this.setState({
-        ws_page_msg: "Sent!"
+        ws_page_msg: "Error with sending message! Make sure it is an integer"
       });
-    // } catch(e) {
-    //   this.setState({
-    //     ws_page_msg: "Error with sending message!"
-    //   });
-    // }
+    }
   }
 
   render () {

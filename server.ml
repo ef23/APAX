@@ -120,7 +120,9 @@ let rec id_from_oc cl oc =
 (* [nindex_from_id id] takes a server id [id] and the nextIndexList and
  * finds the nextIndex of server [id] *)
 let rec nindex_from_id id =
-    List.assoc id serv_state.nextIndexList
+    match List.assoc_opt id serv_state.nextIndexList with
+    | None -> print_endline "you fucking idiot"; -1
+    | Some i -> i
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
@@ -179,7 +181,10 @@ let stringify_e (e:entry): string =
   in json
 
 let nindex_from_id ip =
-    List.assoc ip serv_state.nextIndexList
+    match List.assoc_opt ip serv_state.nextIndexList with
+    | None -> print_endline "adsfjdkglkjg AHAHAHHAA"; -1
+    | Some i -> i
+
 (* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
     let json =
@@ -586,7 +591,7 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    if ((List.length serv_state.neighboringIPs)-num_clients)<=1 then win_election ();
+    if (List.length serv_state.neighboringIPs)<=1 then win_election ();
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
 and init_candidate () =
@@ -713,7 +718,7 @@ let handle_ae_res msg oc =
     let t_count = !response_count + 1 in
 
     (* if we have a majority of followers allowing the commit, then commit *)
-    if s_count > (((List.length serv_state.neighboringIPs)-num_clients) / 2) then
+    if s_count > ((List.length serv_state.neighboringIPs) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
         (* commit to log by incrementing the commitIndex *)
@@ -722,7 +727,7 @@ let handle_ae_res msg oc =
          * the next round of AEres, so we need to track who has responded to which AEreqs *)
         let old_ci = serv_state.commitIndex in
         serv_state.commitIndex <- old_ci + 1; ())
-    else if t_count = ((List.length serv_state.neighboringIPs)-num_clients) then
+    else if t_count = (List.length serv_state.neighboringIPs) then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
         ()) (* TODO notify client of failure *)
@@ -747,7 +752,7 @@ let handle_vote_res msg =
     if voted then vote_counter := !vote_counter + 1;
     print_endline ("num clients " ^ (string_of_int num_clients));
     if serv_state.role <> Leader && !vote_counter >
-        ((((List.length serv_state.neighboringIPs)) - num_clients) / 2)
+        (((List.length serv_state.neighboringIPs)) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -902,10 +907,11 @@ let accept_connection conn =
     let otherl = !channels in
     let ip = "" in
     channels := ((ip, (ic, oc))::otherl);
-    let iplistlen = (List.length (serv_state.neighboringIPs)-num_clients) in
+    let iplistlen = List.length (serv_state.neighboringIPs) in
     if (List.length !channels)=iplistlen&&(not serv_state.started)&&serv_state.is_server
     then init_server ();
     (* accept the client's connections so need to remap channels *)
+    if serv_state.started then setup_connections ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -943,7 +949,7 @@ let main_client address portnum =
         let otherl = !channels in
              let ip = "" in
              channels := ((ip, (ic, oc))::otherl);
-             let iplistlen = ((List.length (serv_state.neighboringIPs))-num_clients) in
+             let iplistlen = List.length (serv_state.neighboringIPs) in
              if (List.length !channels)=iplistlen && serv_state.is_server && (not serv_state.started)
              then (print_endline "connections good"; init_server ())
              else print_endline "not good";
@@ -989,7 +995,7 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-(* let rec send_msg_from_client msg querying_leader =
+let rec send_msg_from_client msg querying_leader =
     if (!leader_ip="") then
         match querying_leader with
         | true ->  Lwt.on_termination (Lwt_unix.sleep 1.)
@@ -1008,21 +1014,7 @@ let _ = Random.self_init()
             | None -> ()
             | Some (ic, oc) ->
                 let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
-                send_msg new_val_json oc; () *)
-
-let rec send_msg_from_client msg kek=
-    if (!leader_ip="") then
-        begin
-            let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
-            List.iter
-            (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-                (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
-            let find_ip_json = "{\"type\":\"find_leader\"}" in
-            match List.nth_opt !channels 0 with
-            | Some (ip, (ic, oc)) -> send_msg find_ip_json oc; ()
-            | None -> ()
-        end
-    else print_endline !leader_ip; ()
+                send_msg new_val_json oc; ()
 
 let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
