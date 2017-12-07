@@ -718,6 +718,7 @@ let handle_ae_req msg oc =
         current_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
+    (* right now we only process conflicts, append new entries, and update commit if true *)
     if (success_bool) then
         (process_conflicts entries; (* 3 *)
         append_new_entries entries; (* 4 *)
