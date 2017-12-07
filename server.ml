@@ -25,6 +25,7 @@ type state = {
 }
 
 let get_ae_response_from = ref []
+let index_responses = ref []
 
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -329,7 +330,6 @@ let force_conform id =
     (* update the nextIndex for this server to be ni - 1 *)
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.nextIndexList in
     serv_state.nextIndexList <- (id, ni-1)::new_indices;
-    (* TODO do i retry the AEReq here? upon next client req? *)
     ()
 
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
@@ -530,6 +530,7 @@ and act_leader () =
     act_all();
     print_endline ("my heartbeat timer: " ^ string_of_float (serv_state.heartbeat));
     send_heartbeats (); ()
+
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
@@ -700,10 +701,58 @@ let handle_ae_res msg oc =
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
-    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
-    let s_count = (if success then !success_count + 1 else !success_count) in
-    let t_count = !response_count + 1 in
+    get_ae_response_from := (List.remove_assq oc !get_ae_response_from); 
+
+    let servid = match (id_from_oc !channels oc) with 
+    | None -> "should be impossible"
+    | Some s -> s in
+
+    if (success) then 
+    (let rpc_mes = List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from in 
+
+    let last_entry_serv_committed = 
+    match rpc_mes with 
+    | (o, r) -> 
+        begin 
+            try (List.hd (r.entries)).index with 
+            | _ -> failwith "Impossible. Leader should always have at least one entry to send." 
+        end 
+    in 
+
+    let latest_ind_for_server = 
+    match List.assoc_opt servid serv_state.matchIndexList with
+    | None -> (*serv_state.matchIndexList <- 
+    (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*) 
+    failwith "should not occur because we already update match index?"
+    | Some i -> i in
+
+    (*index responses is in decreasing log index, and it is (ind of entry, num servers
+    that contain that entry)*)
+    let num_to_add = match !index_responses with 
+    | (indd, co)::t -> indd + 1
+    | [] -> 1 in 
+
+    let rec add_to_index_responses ind_to_add ind_to_stop = 
+    if (ind_to_add >= ind_to_stop) 
+    then () 
+    else 
+    (index_responses := (ind_to_add, 0)::!index_responses; 
+    add_to_index_responses (ind_to_add + 1) ind_to_stop) in 
+
+    add_to_index_responses num_to_add (last_entry_serv_committed);
+
+    index_responses := List.map (fun (ind, count) -> 
+    if (ind > latest_ind_for_server && ind <= last_entry_serv_committed) 
+    then (ind, (count + 1)) else (ind, count))
+    !index_responses) else 
+    force_conform servid;
+    get_ae_response_from := (!get_ae_response_from @ ((oc, create_rpc ())[](*TODO add new rpc*)));
+
+    let total_num_servers = List.length serv_state.neighboringIPs in 
+    let index_to_commit_tup = List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses in 
+    let index_to_commit = fst index_to_commit_tup in 
+    serv_state.commitIndex = index_to_commit
 
     (* if we have a majority of followers allowing the commit, then commit *)
     if s_count > (((List.length serv_state.neighboringIPs)-num_clients) / 2) then
@@ -801,8 +850,8 @@ let handle_message msg oc =
         else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
-            let p_log_idx = get_p_log_idx in
-            let p_log_term = get_p_log_term in
+            let p_log_idx = get_p_log_idx () in
+            let p_log_term = get_p_log_term () in
             let new_entry = {
                     value = msg |> member "value" |> to_int;
                     entryTerm = msg |> member "entryTerm" |> to_int;
