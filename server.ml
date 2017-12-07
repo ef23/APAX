@@ -797,11 +797,11 @@ let handle_ae_res msg oc =
                 else
                     (index_responses := (ind_to_add, 0)::!index_responses;
                     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
-            assert (List.length !index_responses > 0);
             print_endline ("AFTER ADD TO IND RESPONSES");
             print_endline ("NUM TO ADD" ^ string_of_int num_to_add);
             print_endline ("LAST ENTRY SERVE COMMITTED IND" ^ (string_of_int last_entry_serv_committed));
             add_to_index_responses num_to_add (last_entry_serv_committed);
+            assert (List.length !index_responses > 0);
 
             index_responses := ((List.map (fun (ind, count) ->
                             if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
