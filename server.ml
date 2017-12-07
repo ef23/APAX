@@ -782,8 +782,7 @@ let handle_ae_req msg oc =
         success = success_bool;
         curr_term = serv_state.curr_term;
     } in
-    (* TODO do we still process conflicts and append new entries if success = false???? *)
-    (* right now we only process conflicts, append new entries, and update commit if true *)
+    
     if (success_bool) then
         (process_conflicts entries; (* 3 *)
         append_new_entries entries; (* 4 *)
@@ -807,20 +806,6 @@ let handle_ae_res msg oc =
     ) in
 
     handle_precheck curr_term;
-
-    (* TODO we may need to modify these functions depending on the request that
-     * this is in response to *)
-    (*if success then
-        begin
-            update_match_index oc;
-            update_next_index oc
-        end;*)
-    (* if (not success) then (force_conform responder_id); *)
-
-    (* here we identify the request that this response is to via the first tuple
-     * whose oc matches [oc]; then we remove it if success is true *)
-
-
 
     let servid = match (id_from_oc !channels oc) with
         | None -> "should be impossible"
