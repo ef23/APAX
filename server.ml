@@ -513,7 +513,6 @@ let act_all () =
     (serv_state.last_applied <- la + 1); ()
 
 let process_leader_death () =
-
     print_endline serv_state.leader_id;
     print_endline ("MU!!!");
     let l_id = serv_state.leader_id in
@@ -736,11 +735,6 @@ let handle_ae_res msg oc =
      * this is in response to *)
     if success then
         begin
-            begin
-                match List.assoc_opt serv_state.commit_index serv_state.log with
-                | None -> ()
-                | Some {value=v} -> res_client_msg := string_of_int v
-            end;
             update_match_index oc;
             update_next_index oc
         end;
@@ -839,6 +833,11 @@ let process_heartbeat msg =
 
     if leader_commit > serv_state.commit_index
     then begin
+            begin
+                match List.assoc_opt serv_state.commit_index serv_state.log with
+                | None -> ()
+                | Some {value=v} -> res_client_msg := string_of_int v
+            end;
             serv_state.leader_id <- l_id;
             serv_state.commit_index <- min leader_commit (get_p_log_idx ())
         end
@@ -882,10 +881,9 @@ let handle_message msg oc =
         else serv_state.leader_id in
         let res = "{\"type\": \"find_leader_res\", \"leader\": \""^res_id^"\"}" in
         ignore (send_msg res oc); ()
-    | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
+    | "find_leader_res" -> leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
         (* create the append_entries_rpc *)
-
         let new_entry = {
                 value = msg |> member "value" |> to_int;
                 entry_term = serv_state.curr_term;
