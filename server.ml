@@ -106,56 +106,55 @@ let (body_ws : Cohttp_lwt_body.t option ref) = ref None
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-
 (* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
  * finds the id corresponding to the channel [oc] *)
 let rec id_from_oc cl oc =
-  match cl with
-  | [] -> None
-  | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+    match cl with
+    | [] -> None
+    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
-  match serv_state.log with
-  | [] -> None
-  | (_, e)::_ -> Some e
+    match serv_state.log with
+    | [] -> None
+    | (_, e)::_ -> Some e
 
 (* [get_p_log_idx ()] returns the 1-based index of the most recently added
  * entry in the log *)
 let get_p_log_idx () =
-  match last_entry () with
-  | None -> 0
-  | Some e -> e.index
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.index
 
 (* [get_p_log_term ()] returns the 1-based term of the most recently added
  * entry in the log *)
 let get_p_log_term () =
-  match last_entry () with
-  | None -> 0
-  | Some e -> e.entry_term
+    match last_entry () with
+    | None -> 0
+    | Some e -> e.entry_term
 
 (* [full_addr_str p] returns the concatenation of this server's IP and port *)
 let full_addr_str port_num =
-  Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
+    Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
 
 (* [change_heartbeat ()] changes the current server's heartbeat to a randomized,
  * value on a fixed interval *)
 let change_heartbeat () =
-  let new_heartbeat = generate_heartbeat () in
-  serv_state.heartbeat <- new_heartbeat
+    let new_heartbeat = generate_heartbeat () in
+    serv_state.heartbeat <- new_heartbeat
 
 (* [update_neighbors ips id] updates this server's neighboring IPs list with
  * [ips] TODO more on this later *)
 let update_neighbors ips id =
-  serv_state.neighboring_ips <- ips;
-  serv_state.id <- id
+    serv_state.neighboring_ips <- ips;
+    serv_state.id <- id
 
-(* [send_msg str oc] is a Leader-side function that sends the string message 
- * [msg] to the Follower connected by output channel [oc] *)
+(* [send_msg str oc] sends the string message [msg] to the server connected by
+ * output channel [oc] *)
 let send_msg str oc =
-  print_endline ("sending: "^str);
-  ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
+    print_endline ("sending: "^str);
+    ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
 
 (* [stringify_e e] converts an entry record [e] to a string *)
 let stringify_e (e:entry): string =
@@ -170,13 +169,12 @@ let stringify_e (e:entry): string =
 (* [nindex_from_id id] takes a server id [id] and the next_index_lst and
  * finds the nextIndex of server [id] *)
 let nindex_from_id id =
-  match List.assoc_opt id serv_state.next_index_lst with
-  | None -> -1
-  | Some i -> i
+    match List.assoc_opt id serv_state.next_index_lst with
+    | None -> -1
+    | Some i -> i
 
-(* [req_append_entries msg ip oc] is a Leader-side function that sends an
- * AppendEntries Request to the Follower at output channel [oc] *)
-let req_append_entries (msg : append_entries_req) oc =
+(* [oc] is the output channel to send to a server with an ip [ip] *)
+let req_append_entries (msg : append_entries_req) (ip : string) oc =
     let string_entries = List.map (fun x -> stringify_e x) msg.entries in
     let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
     let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
@@ -197,8 +195,8 @@ let req_append_entries (msg : append_entries_req) oc =
 
     send_msg json oc
 
-(* [res_append_entries ae_res oc] is a Follower-side function that sends the 
- * stringified append entries response [ae_res] to the output channel [oc] *)
+(*[res_append_entries ae_res oc] sends the stringified append entries response
+ * [ae_res] to the output channel [oc]*)
 let res_append_entries (ae_res:append_entries_res) oc =
     if (not serv_state.is_server) then Lwt.return(()) else
     let json =
@@ -211,7 +209,8 @@ let res_append_entries (ae_res:append_entries_res) oc =
     send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
- * - requires: [entries] has at least one entry in it *)
+ * - requires: [entries] has at least one entry in it
+ *)
 let json_es (entries): entry list =
     let json = Yojson.Basic.Util.to_list entries in
     let assoc_list = List.map (fun x -> Yojson.Basic.Util.to_assoc x) (json) in
@@ -234,9 +233,8 @@ let json_es (entries): entry list =
     let ocaml_entries = List.map extract_record assoc_list in
     ocaml_entries
 
-(* [send_rpcs f] is a Leader-side function that recursively sends RPCs to every
- * ip in [ips] using the partially applied function [f], which is assumed to be
- * one of the following:
+(* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
+ * partially applied function [f], which is assumed to be one of the following:
  * [req_append_entries msg]
  * [req_request_vote msg] *)
 let rec send_rpcs f =
@@ -247,9 +245,8 @@ let rec send_rpcs f =
       | (ic, oc)::t -> f oc; send_to_ocs t in
     send_to_ocs lst_o
 
-(* [mismatch_log l pli plt] is a Follower-side function that returns true if log
- * [l] doesnt contain an entry at index [pli] with entry term [plt]; 
- * else false *)
+(* [mismatch_log l pli plt] returns true if log [l] doesnt contain an entry at
+ * index [pli] with entry term [plt]; else false *)
 let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
     (* returns nth entry of the log *)
     if (List.length my_log <= 1) then false
@@ -259,9 +256,8 @@ let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
         | None -> true
         | Some (_,e) -> if e.entry_term = prev_log_term then (print_endline "terms"; false) else true
 
-(* [process_conflicts entries] is a Follower-side function that goes through the
- * server's log and removes entries that conflict (same index different term) 
- * with those in [entries] *)
+(* [process_conflicts entries] goes through the server's log and removes entries
+ * that conflict (same index different term) with those in [entries] *)
 let process_conflicts entries =
     (* [does_conflict e1 e2] returns true if e1 has a different term than e2
      * -requires e1 and e2 to have the same index *)
@@ -292,9 +288,9 @@ let process_conflicts entries =
     let n_log = iter_entries entries old_log in
     serv_state.log <- n_log
 
-(* [append_new_entries entries] is a Follower-side function that adds the new 
- * entries to the log. The entries must be in reverse chronological order as 
- * with the log *)
+(* [append_new_entries entries] adds the new entries to the log
+ * the entries must be in reverse chronological order as with the log
+ *)
 let rec append_new_entries (entries : entry list) : unit =
     let entries = List.rev_append entries [] in
     let rec append_new (entries: entry list):unit =
@@ -320,9 +316,22 @@ let rec print_lst () = function
     | h::t -> match h with
         | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
 
-(* [send_heartbeat oc ()] is a Leader-side function that sends one heartbeat to 
- * the Follower server corresponding to output channel [oc] *)
+let check_majority () =
+        let total_num_servers = List.length serv_state.neighboring_ips in
+        print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
+        let index_to_commit = if (total_num_servers = 0) then (List.length (serv_state.log)) else
+    (*     List.iter ((fun (ind, count) -> print_endline (string_of_int ind ^ ":" ^string_of_int count))
+    !index_responses); *)
+        match List.find_opt (fun (ind, count) -> count >= (total_num_servers/2)) !index_responses with
+        | None -> (print_endline "none"; serv_state.commit_index)
+        | Some (ind, count) -> (print_endline ("some ind " ^ (string_of_int ind)); ind) in
+        serv_state.commit_index <- index_to_commit
+
+(* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
+ * output channel [oc] *)
 let rec send_heartbeat oc () =
+    check_majority ();
+    print_endline ("commit index " ^ string_of_int (serv_state.commit_index));
     let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
     let int_entry_tuple =
         match List.nth_opt (serv_state.log) ind_to_send with
@@ -333,6 +342,7 @@ let rec send_heartbeat oc () =
         )
         | Some x -> x in
     let string_entry = stringify_e (snd int_entry_tuple) in
+    print_endline ("string entry " ^ string_entry);
     let final_entries_str = "[" ^ string_entry  ^ "]" in
 
 
@@ -353,12 +363,13 @@ let rec send_heartbeat oc () =
         match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
         | Some (idd, (i, oo)) -> idd
         | None -> "" in
-        List.iter (fun (oc, rpc) -> req_append_entries rpc oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
+        List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
-(* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
- * to the servers based on the [msg] containing the value the client wants to 
- * add as well as the leader's term and the index of the entry in the log. *)
+(* [create_rpc msg i t] creates an rpc to be sent to the servers based on the [msg]
+ * containing the value the client wants to add as well as the leader's term and
+ * the index of the entry in the log. Only the leader should call this function
+ *)
 let create_rpc msg id p_log_idx p_log_term =
     (* let p_log_idx = get_p_log_idx () in *)
     (* let p_log_term = get_p_log_term () in *)
@@ -383,10 +394,9 @@ let create_rpc msg id p_log_idx p_log_term =
         entries = entries_;
         leader_commit = serv_state.commit_index
     }
-
-(* [force_conform id] is a Leader-side function that forces a Follower server 
- * with id [id] to conform to the leader's log if there is an inconsistency 
- * between the logs (aka the AERes success would be false) *)
+(* [force_conform id] forces server with id [id] to conform to the leader's log
+ * if there is an inconsistency between the logs (aka the AERes success would be
+ * false) *)
 let force_conform id =
     let ni = nindex_from_id id in
     (* update the nextIndex for this server to be ni - 1 *)
@@ -395,9 +405,9 @@ let force_conform id =
     serv_state.next_index_lst <- (id, ni-1)::new_indices;
     ()
 
-(* [update_matchIndex oc] is a Leader-side function that finds the id of the 
- * server corresponding to [oc] and updates its matchIndex in this server's
- * matchIndex list *)
+(* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
+ * updates its matchIndex in this server's matchIndex list
+ * -requires the server of [oc] to have responded to an AEReq with true *)
 let rec update_match_index oc =
     match (id_from_oc !channels oc) with
     | None -> failwith "uh wtf"
@@ -418,18 +428,16 @@ let rec update_match_index oc =
         in
         apply [] serv_state.match_index_lst id; ()
 
-(* [update_next_index ] is a Leader-side function that updates the next_index
- * for a given Follower server connected to [oc] *)
+(* [update_next_index ] is only used by the leader *)
 let update_next_index oc =
     print_endline " update next index";
     let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
     serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
 
-(* [update_commit_index ()] is a Leader-side function that updates the 
- * commit_index for the Leader by finding an N such that N > commit_index, a 
- * majority of matchIndex values >= N, and the term of the Nth entry in the 
- * leader's log is equal to curr_term *)
+(* [update_commit_index ()] updates the commit_index for the Leader by finding an
+ * N such that N > commit_index, a majority of matchIndex values >= N, and the
+ * term of the Nth entry in the leader's log is equal to curr_term *)
 let update_commit_index () =
     (* upper bound on N, which is the index of the last entry *)
     let ub = get_p_log_idx () in
@@ -454,20 +462,6 @@ let update_commit_index () =
     let n_ci = find_n ub init_N serv_state.commit_index in
     assert (n_ci >= old_ci);
     serv_state.commit_index <- n_ci; ()
-
-(* [check_majority ()] is a Leader-side function that checks if a majority for a
- * specific entry index has been reached, and if so, updates the commit_index. *)
-let check_majority () =
-        let total_num_servers = List.length serv_state.neighboring_ips in
-        print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
-        assert (List.length !index_responses > 0);
-    (*     List.iter ((fun (ind, count) -> print_endline (string_of_int ind ^ ":" ^string_of_int count))
-    !index_responses); *)
-        let index_to_commit =
-        match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-        | None -> (print_endline "none"; serv_state.commit_index)
-        | Some (ind, count) -> (print_endline ("some ind " ^ (string_of_int ind)); ind) in
-        serv_state.commit_index <- index_to_commit
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -496,29 +490,21 @@ let read_neighboring_ips port_num =
   in
   process_file (Pervasives.open_in "ips.txt")
 
-(* [req_request_vote ballot oc] is a Candidate-side function that sets a
- * RequestVote Request to the Follower at output channel [oc] with a ballot
- * [ballot] containing the information necessary for the Follower to make a 
- * vote decision. *)
 let req_request_vote ballot oc =
-  let json =
-    (* TODO: fix this to be less than 80 characters *)
-    "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
-  in send_msg json oc
+    let json =
+      "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
+    in send_msg json oc
 
-(* [res_request_vote msg oc] is a Follower-side function that handles receiving 
- * a vote request message [msg] from the Candidate at output channel [oc] *)
+(* [res_request_vote msg oc] handles receiving a vote request message *)
 let res_request_vote msg oc =
     let candidate_id = msg |> member "candidate_id" |> to_string in
-    let continue =
-      match serv_state.voted_for with
-      | None -> true
-      | Some id -> id=candidate_id in
+    let continue = match serv_state.voted_for with
+                    | None -> true
+                    | Some id -> print_endline id; print_endline candidate_id; id=candidate_id in
     let otherTerm = msg |> member "term" |> to_int in
     let vote_granted = continue && otherTerm >= serv_state.curr_term in
     if (vote_granted) then serv_state.voted_for <- (Some candidate_id);
     let json =
-            (* TODO: fix this to be 80 characters *)
           "{\"type\": \"vote_res\", \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match serv_state.lastEntry with
@@ -532,33 +518,31 @@ let res_request_vote msg oc =
          in send_msg json oc
     | None -> failwith "kek" *)
 
-(* [send_heartbeats ()] is a Leader-side function that sends heartbeats to all
- * the Followers *)
 let send_heartbeats () =
-  let lst_o = List.map (fun (ip, chans) -> chans) !channels in
-  let rec send_to_ocs lst =
-    match lst with
-    | (ic, oc)::t ->
-      begin
-        print_endline "in send heartbeat match";
-        let start_timer oc_in =
-        Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
-        in
-        ignore (Thread.create start_timer oc); send_to_ocs t;
-      end
-    | [] -> () in
-  print_endline "number of ocs";
-  print_endline (string_of_int (List.length lst_o));
+    let lst_o = List.map (fun (ip, chans) -> chans) !channels in
+    let rec send_to_ocs lst =
+      match lst with
+      | (ic, oc)::t ->
+        begin
+          print_endline "in send heartbeat match";
+          let start_timer oc_in =
+          Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
+          in
+          ignore (Thread.create start_timer oc); send_to_ocs t;
+        end
+      | [] -> () in
+    print_endline "number of ocs";
+    print_endline (string_of_int (List.length lst_o));
 
-  send_to_ocs lst_o
+    send_to_ocs lst_o
 
 (* [act_all ()] is a simple check that all servers perform regularly, regardless
  * of role. It should be called at the start of every iteration of one of the
  * act functions for roles *)
 let act_all () =
-  let la = serv_state.last_applied in
-  if serv_state.commit_index > la then
-  (serv_state.last_applied <- la + 1); ()
+    let la = serv_state.last_applied in
+    if serv_state.commit_index > la then
+    (serv_state.last_applied <- la + 1); ()
 
 (* [process_leader_death ()] handles leader death by removing the leader from
  * neighboring_ips in order to reflect that the server has gone done in order
@@ -589,40 +573,41 @@ let process_leader_death () =
     print_endline (string_of_int (List.length !channels));
     serv_state.leader_id <- ""; ()
 
-(* [start_election ()] is a Follower-side function that starts the election for
- * this server by incrementing its term and sending RequestVote RPCs to every 
- * other server in the clique *)
+(* [start_election ()] starts the election for this server by incrementing its
+ * term and sending RequestVote RPCs to every other server in the clique *)
 let rec start_election () =
-  print_endline "A new election has begun!------------------------------------";
-  (* increment term and vote for self *)
-  let curr_term = serv_state.curr_term in
-  serv_state.curr_term <- curr_term + 1;
-  serv_state.voted_for <- (Some serv_state.id);
-  vote_counter := 1;
-  (* ballot is a vote_req *)
-  let ballot = {
-    term = serv_state.curr_term;
-    candidate_id = serv_state.id;
-    last_log_index = get_p_log_idx ();
-    last_log_term = get_p_log_term ();
-  } in
-  print_endline "Sending votes!";
-  send_rpcs (req_request_vote ballot);
+    print_endline "election started!";
+    (* increment term and vote for self *)
+    let curr_term = serv_state.curr_term in
+    serv_state.curr_term <- curr_term + 1;
+    serv_state.voted_for <- (Some serv_state.id);
+    vote_counter := 1;
+    (* ballot is a vote_req *)
+    let ballot = {
+        term = serv_state.curr_term;
+        candidate_id = serv_state.id;
+        last_log_index = get_p_log_idx ();
+        last_log_term = get_p_log_term ();
+    } in
+    print_endline "sending rpcs...";
+    send_rpcs (req_request_vote ballot);
 
-(* [act_leader ()] is a Leader-side function that executes all leader 
- * responsibilities, namely sending RPCs and listening for client requests
+(* [act_leader ()] executes all leader responsibilities, namely sending RPCs
+ * and listening for client requests
  *
  * if a leader receives a client request, they will process it accordingly *)
 and act_leader () =
-  (* start thread to periodically send heartbeats *)
-  print_endline "I am a leader----------------------------------------------";
-  update_commit_index ();
-  act_all();
-  print_endline ("My heartbeat: " ^ string_of_float (serv_state.heartbeat));
-  send_heartbeats (); ()
+    (* start thread to periodically send heartbeats *)
+    print_endline "I am a leader----------------------------------------------";
+    update_commit_index ();
+    act_all();
+    print_endline ("My heartbeat: " ^ string_of_float (serv_state.heartbeat));
+    send_heartbeats (); ()
 
-(* [init_leader ()] is a Leader-side function that initializes the state to be
- * ready for Leader functions *)
+(* [init_leader ()] initializes a server to the leader state. This involves
+ * building the leader's match_index_lst and next_index_lst, and setting the
+ * next index before acting as leader
+ *)
 and init_leader () =
   let rec build_match_index build ips =
     match ips with
@@ -643,9 +628,8 @@ and init_leader () =
   build_next_index [] serv_state.neighboring_ips n_idx;
   act_leader ();
 
-(* [act_candidate ()] is a Candidate-side function that executes all candidate 
- * responsibilities, namely sending vote requests and ending an election as a 
- * winner/loser/stall
+(* [act_candidate ()] executes all candidate responsibilities, namely sending
+ * vote requests and ending an election as a winner/loser/stall
  *
  * if a candidate receives a client request, they will reply with an error *)
 and act_candidate () =
@@ -679,8 +663,7 @@ and act_candidate () =
  * server-side function
  *)
 and init_candidate () =
-  print_endline "Initialized as candidate!";
-  act_candidate ()
+    act_candidate ()
 
 (* [act_follower ()] executes all follower responsibilities, namely starting
  * elections, responding to RPCs, and redirecting client calls to the leader
@@ -689,57 +672,57 @@ and init_candidate () =
  * to the leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
-  print_endline "I am a follower--------------------------------------------";
-  print_lst () (List.map (fun (x,y) -> y) serv_state.log);
-  print_endline ("My heartbeat " ^ (string_of_float serv_state.heartbeat));
-  serv_state.role <- Follower;
+    print_endline "I am a follower--------------------------------------------";
+    print_lst () (List.map (fun (x,y) -> y) serv_state.log);
+    print_endline ("My heartbeat " ^ (string_of_float serv_state.heartbeat));
+    serv_state.role <- Follower;
 
-  act_all ();
-  (* check if the timeout has expired, and that it has voted for no one *)
-  print_endline "hearbteat for";
-  print_endline (string_of_bool serv_state.received_heartbeat);
-  print_endline "voted for";
-  print_endline (string_of_bool (serv_state.voted_for = None));
-  if (serv_state.voted_for = None && serv_state.received_heartbeat = false)
-  then begin
-    process_leader_death ();
-    serv_state.role <- Candidate;
-    init_candidate ()
-  end
-  (* if condition satisfied, continue being follower, otherwise start elec *)
-  else begin
-    serv_state.received_heartbeat <- false;
-    Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat))
-                       (fun () -> act_follower ())
-  end
+    act_all ();
+    (* check if the timeout has expired, and that it has voted for no one *)
+    print_endline "hearbteat for";
+    print_endline (string_of_bool serv_state.received_heartbeat);
+    print_endline "voted for";
+    print_endline (string_of_bool (serv_state.voted_for = None));
+    if (serv_state.voted_for = None && serv_state.received_heartbeat = false)
+    then begin
+            process_leader_death ();
+            serv_state.role <- Candidate;
+            init_candidate ()
+        end
+    (* if condition satisfied, continue being follower, otherwise start elec *)
+    else begin
+            serv_state.received_heartbeat <- false;
+            Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat)) (fun () -> act_follower ())
+        end
+
 (* [init_follower ()] initializes a server to act as a follower by beginning a
  * timeout cycle the same length as the server's heartbeat. This is a server
  * side function, the client should never run this.
  *)
 and init_follower () =
-  print_endline "Initialized as follower!";
+  print_endline "init follower";
   Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
                      (fun () -> (act_follower ()));
 
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
 and win_election () =
-  (* transition to Leader role *)
-  serv_state.role <- Leader;
-  (* send heartbeats *)
-  init_leader ()
+    (* transition to Leader role *)
+    serv_state.role <- Leader;
+    (* send heartbeats *)
+    init_leader ()
 
 (* [lose_election ()] transitions the server from a candidate to a follower
  * and executes the appropriate actions *)
 and lose_election () =
-  (* transition to Follower role *)
-  serv_state.role <- Follower;
-  act_follower ()
+    (* transition to Follower role *)
+    serv_state.role <- Follower;
+    act_follower ()
 
 (* [terminate_election ()] executes when timeout occurs in the middle of an
  * election with no resolution (i.e. no one wins or loses) *)
 and terminate_election () =
-  start_election ()
+    start_election ()
 
 (* [id_from_oc cl oc] grabs the server id of the given [oc] in a list of [cl]
  * Returns string option.
@@ -776,7 +759,7 @@ let handle_ae_req msg oc =
     in
     print_endline (string_of_bool success_bool);
     let ae_res = {
-        success = true; (*before was success_bool*)
+        success = success_bool;
         curr_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
@@ -850,7 +833,7 @@ let handle_ae_res msg oc =
             let rec add_to_index_responses ind_to_add ind_to_stop =
                 if (ind_to_add > ind_to_stop) then ()
                 else
-                    (index_responses := (ind_to_add, 0)::!index_responses;
+                    (index_responses := (ind_to_add, 1)::!index_responses;
                     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
 
             print_endline ("AFTER ADD TO IND RESPONSES");
