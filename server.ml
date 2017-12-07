@@ -180,7 +180,14 @@ let stringify_e (e:entry): string =
     "}"
   in json
 
+let rec print_lst l =
+    match l with
+    | [] -> ()
+    | (s,i)::t -> print_endline s; print_endline (string_of_int i); print_lst t
+
 let nindex_from_id ip =
+    print_endline ip;
+    print_lst serv_state.next_index_lst;
     match List.assoc_opt ip serv_state.next_index_lst with
     | None -> print_endline "adsfjdkglkjg AHAHAHHAA"; -1
     | Some i -> i
@@ -989,21 +996,32 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
+(* [send_msg_from_client msg querying_leader] sends a message to the ip, and
+ * also handles leader redirection.
+ *)
 let rec send_msg_from_client msg querying_leader =
+    (* this condition is true if leader has not been found yet *)
     if (!leader_ip="") then
         match querying_leader with
+        (* true if we are waiting for a response in order to wait to assign
+         * the leader ip. *)
         | true ->  Lwt.on_termination (Lwt_unix.sleep 1.)
-                        (fun () -> print_endline "waiting for res"; (send_msg_from_client msg true));
+                        (fun () -> (send_msg_from_client msg true));
+        (* otherwise, send an rpc to the first server to ask for the leader ip
+         * and assign it.*)
         | false ->
+            (* open the output channels *)
             let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
             List.iter
             (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
             (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
+            (* send the json requesting for the leader ip *)
             let find_ip_json = "{\"type\":\"find_leader\"}" in
             match List.nth_opt !channels 0 with
             | Some (ip, (ic, oc)) -> send_msg find_ip_json oc;
                                      send_msg_from_client msg true
             | None -> ()
+    (* otherwise, send the new updated value to be entered to the leader *)
     else match (List.assoc_opt !leader_ip !channels) with
             | None -> ()
             | Some (ic, oc) ->
@@ -1025,6 +1043,7 @@ let handler
         "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
   >>= fun _ ->
   let uri = Cohttp.Request.uri req in
+  (* websocket will connect to this url and will listen on this uri *)
   match Uri.path uri with
   | "/" ->
     Lwt_io.eprintf "[PATH] \n%!"
@@ -1067,11 +1086,14 @@ let handler
  * on port (port_num + 1). Have the web client connect on ip:port_num
  *)
 let start_websocket host port_num () =
+  (* initialize the client server to connect to all the servers on the list *)
   serv_state.is_server <- false;
   read_neighboring_ips port_num;
   establish_connections_to_others ();
   let sock = create_socket (port_num+1) () in
   let serve = create_server sock in
+
+  (* begin the websocket *)
   let conn_closed (ch,_) =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
@@ -1080,6 +1102,7 @@ let start_websocket host port_num () =
   Cohttp_lwt_unix.Server.create
     ~mode:(`TCP (`Port port_num))
     (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ());
+  (* run the server *)
   Lwt_main.run @@ serve ()
 
 (* [start_client] begins the client server, by default, localhost:3001 *)
