@@ -434,12 +434,12 @@ let update_commit_index () =
     serv_state.commit_index <- n_ci; ()
 
 let check_majority () =
-        let total_num_servers = List.length serv_state.neighboring_ips in
-        let index_to_commit =
-        match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-        | None -> serv_state.commit_index
-        | Some (ind, count) -> ind in
-        serv_state.commit_index <- index_to_commit
+    let total_num_servers = List.length serv_state.neighboring_ips in
+    let index_to_commit =
+    match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
+    | None -> serv_state.commit_index
+    | Some (ind, count) -> ind in
+    serv_state.commit_index <- index_to_commit
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -806,7 +806,7 @@ let handle_ae_res msg oc =
         let pli = get_p_log_idx () in
         let plt = get_p_log_term () in
         let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
-        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[])
+        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
         check_majority ()
     end
     
