@@ -319,7 +319,21 @@ let rec print_lst () = function
 (* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
  * output channel [oc] *)
 let rec send_heartbeat oc () =
+    let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
+    let int_entry_tuple = 
+        match List.nth_opt (serv_state.log) ind_to_send with 
+        | None -> (1, 
+            {value=0;
+            entry_term=(-1);
+            index=(-1)}
+        )
+        | Some x -> x in 
+    let string_entry = stringify_e (snd int_entry_tuple) in
+    let final_entries_str = "[" ^ string_entry  ^ "]" in
+
+
     print_lst () (List.map (fun (x,y) -> y) serv_state.log);
+    print_endline (string_of_int serv_state.commit_index);
     ignore (Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
@@ -327,7 +341,7 @@ let rec send_heartbeat oc () =
         "\"curr_term\":" ^ string_of_int serv_state.curr_term ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": \"\"," ^
+        "\"entries\": " ^ final_entries_str ^ "," ^
         "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
         "}"));
     ignore (Lwt_io.flush oc);
@@ -402,6 +416,7 @@ let rec update_match_index oc =
 
 (* [update_next_index ] is only used by the leader *)
 let update_next_index oc =
+    print_endline " update next index";
     let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
     serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
@@ -442,10 +457,9 @@ let check_majority () =
     !index_responses); *)
         let index_to_commit =
         match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-        | None -> serv_state.commit_index
-        | Some (ind, count) -> ind in
+        | None -> (print_endline "none"; serv_state.commit_index)
+        | Some (ind, count) -> (print_endline ("some ind " ^ (string_of_int ind)); ind) in
         serv_state.commit_index <- index_to_commit
-
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -749,11 +763,11 @@ let handle_ae_res msg oc =
 
     (* TODO we may need to modify these functions depending on the request that
      * this is in response to *)
-    if success then
+    (*if success then
         begin
             update_match_index oc;
             update_next_index oc
-        end;
+        end;*)
     (* if (not success) then (force_conform responder_id); *)
 
     (* here we identify the request that this response is to via the first tuple
@@ -769,7 +783,6 @@ let handle_ae_res msg oc =
 
     if (success) then
     begin
-        assert (List.length !get_ae_response_from > 0);
         match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
         | None -> print_endline ("IN NONE");()
         | Some (o,r) ->
@@ -797,11 +810,13 @@ let handle_ae_res msg oc =
                 else
                     (index_responses := (ind_to_add, 0)::!index_responses;
                     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
+
             print_endline ("AFTER ADD TO IND RESPONSES");
             print_endline ("NUM TO ADD" ^ string_of_int num_to_add);
             print_endline ("LAST ENTRY SERVE COMMITTED IND" ^ (string_of_int last_entry_serv_committed));
             add_to_index_responses num_to_add (last_entry_serv_committed);
             assert (List.length !index_responses > 0);
+            print_endline ("latest ind for server " ^ (string_of_int (latest_ind_for_server)));
 
             index_responses := ((List.map (fun (ind, count) ->
                             if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
@@ -809,7 +824,9 @@ let handle_ae_res msg oc =
             print_endline ("CHCK MAJORITY IF");
 
             check_majority ();
-            get_ae_response_from := (List.remove_assq oc !get_ae_response_from)
+            get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+            update_match_index oc;
+            update_next_index oc
     end
     else begin
         force_conform servid;
@@ -820,10 +837,10 @@ let handle_ae_res msg oc =
         let plt = get_p_log_term () in
         let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
         get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
+
         print_endline ("CHCK MAJORITY ELSE");
         check_majority ();
         get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
-
     end
 
 (* [handle_vote_req msg oc] handles receiving a vote request from a candidate.
@@ -865,6 +882,9 @@ let process_heartbeat msg =
 
     (* if the leader ip that the client server has does not match current
      * leader id, update the leader ip *)
+    let one_entry_in_list = json_es (msg |> member "entries") in 
+    if (List.length one_entry_in_list > 0) then 
+    res_client_msg := string_of_int ((List.hd (one_entry_in_list)).value);
     if (not serv_state.is_server) && !leader_ip <> l_id then leader_ip := l_id;
 
     if leader_commit > serv_state.commit_index
@@ -888,6 +908,7 @@ let handle_client_as_leader msg =
 let update_output_channels oc msg =
     print_endline "as;flkajsd";
     let ip = msg |> member "ip" |> to_string in
+    print_endline " update output channels ";
     let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in
     let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
     print_endline (ip^"EVERYTHING IS OK");
@@ -933,8 +954,12 @@ let handle_message msg oc =
         let new_idx = (List.length old_log) + 1 in
         serv_state.log <- (new_idx,new_entry)::old_log;
 
+        let channels_without_clients = List.filter 
+        (fun (l_id, _) -> (l_id <> "")) !channels in 
+        print_endline ("length of without " ^ (string_of_int (List.length channels_without_clients)));
+
         let output_channels_to_rpc =
-            List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id pli plt)) !channels in
+            List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id pli plt)) channels_without_clients in
         get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
