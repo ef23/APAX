@@ -173,8 +173,10 @@ let nindex_from_id id =
  * AppendEntries Request to the Follower at output channel [oc] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
   let string_entries = List.map (fun x -> stringify_e x) msg.entries in
-  let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
-  let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
+  let entries_str =
+    List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
+  let final_entries_str = "[" ^
+    (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
   let json =
     "{" ^
       "\"type\": \"appd_req\"," ^
@@ -202,7 +204,8 @@ let res_append_entries (ae_res:append_entries_res) oc =
   in
   send_msg json oc
 
-(* [json_es entries] should return a list of entries parsed from the string [entries].
+(* [json_es entries] should return a list of entries parsed from the string
+ * [entries].
  * - requires: [entries] has at least one entry in it
  *)
 let json_es (entries): entry list =
@@ -342,9 +345,11 @@ let rec send_heartbeat oc () =
     match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
     | Some (idd, (i, oo)) -> idd
     | None -> "" in
-
-    List.iter (fun (oc, rpc) -> ignore (req_append_entries rpc (id_of_oc oc) oc); ())  !get_ae_response_from;
-  Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
+      List.iter (fun (oc, rpc) -> 
+        ignore (req_append_entries rpc (id_of_oc oc) oc); ()) 
+        !get_ae_response_from;
+      Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) 
+        (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
  * to the servers based on the [msg] containing the value the client wants to
@@ -381,7 +386,8 @@ let force_conform id =
   let ni = nindex_from_id id in
   (* update the nextIndex for this server to be ni - 1 *)
 
-  let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.next_index_lst in
+  let new_indices =
+    List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.next_index_lst in
   serv_state.next_index_lst <- (id, ni-1)::new_indices;
   ()
 
@@ -411,8 +417,10 @@ let rec update_match_index oc =
 (* [update_next_index ] is a Leader-side function that updates the next_index
  * for a given Follower server connected to [oc] *)
 let update_next_index oc =
-  let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
-  let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
+  let (ip, (_,_)) =
+    List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+  let new_indices =
+    List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
   serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
 
 (* [update_commit_index ()] is a Leader-side function that updates the
@@ -432,7 +440,9 @@ let update_commit_index () =
         if i >= n then mi_geq_n (count+1) total n t
         else mi_geq_n count total n t in
 
-  (* find the highest such n, n <= ub, such that the above function returns true *)
+  (* find the highest such n, n <= ub, such that the above function
+   * returns true
+   *)
   let rec find_n ub n high =
     let l = serv_state.match_index_lst in
     if n > ub then high
@@ -492,16 +502,6 @@ let res_request_vote msg oc =
     let json =
           "{\"type\": \"vote_res\", \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
-    (* match serv_state.lastEntry with
-    | Some log ->
-        let curr_log_ind = log.index in
-        let curr_log_term = log.entry_term in
-        let vote_granted = continue && otherTerm >= serv_state.curr_term &&
-        last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
-        let json =
-          "{\"current_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
-         in send_msg json oc
-    | None -> failwith "kek" *)
 
 (* [send_heartbeats ()] is a Leader-side function that sends heartbeats to all
  * the Followers *)
@@ -512,7 +512,8 @@ let send_heartbeats () =
       | (ic, oc)::t ->
         begin
           let start_timer oc_in =
-          Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc_in ())
+          Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
+                                (fun () -> send_heartbeat oc_in ())
           in
           ignore (Thread.create start_timer oc); send_to_ocs t;
         end
@@ -660,7 +661,8 @@ and act_follower () =
     (* if condition satisfied, continue being follower, otherwise start elec *)
     else begin
             serv_state.received_heartbeat <- false;
-            Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat)) (fun () -> act_follower ())
+            Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat))
+                               (fun () -> act_follower ())
         end
 
 (* [init_follower ()] is a Follower-side function that initializes a server
@@ -725,8 +727,7 @@ let handle_ae_req msg oc =
 
     let success_bool =
         if ap_term < serv_state.curr_term then false (* 1 *)
-        else if mismatch_log serv_state.log prev_log_index prev_log_term then false (* 2 *)
-        else true
+        else not (mismatch_log serv_state.log prev_log_index prev_log_term)
     in
     let ae_res = {
         success = success_bool;
@@ -806,6 +807,7 @@ let handle_ae_res msg oc =
         get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
     end
 
+
 (* [handle_vote_req msg oc] is a Follower-side function that handles receiving
  * a vote request from a candidate. This will generally set the server's state
  * to be a llower and proceed with a new election.
@@ -867,7 +869,7 @@ let process_heartbeat msg =
 let update_output_channels oc msg =
     let ip = msg |> member "ip" |> to_string in
     let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in
-    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc) !channels in
+    let c_lst = List.filter (fun (_, (_, orig_oc)) -> orig_oc != oc)!channels in
     channels := (ip, snd chans)::c_lst
 
 (* [handle_message msg oc] is the function that handles receiving messages from
@@ -922,7 +924,8 @@ let handle_message msg oc =
       let output_channels_to_rpc =
         List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id pli plt))
                                       channels_without_clients in
-      get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
+      get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
+      ()
     | _ -> ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
@@ -1002,8 +1005,8 @@ let rec query_server ic oc =
     print_string  "Request : ";
     print_string (string_of_float (Unix.time ()));
     flush Pervasives.stdout;
-    (* output_string oc ((input_line Pervasives.stdin)^"\n") ; *)
-    output_string oc (("{\"type\":\"appd_res\"}")^"\n"); (*make client automatically do stuff. can reuse in server code*)
+    (*make client automatically do stuff. can reuse in server code*)
+    output_string oc (("{\"type\":\"appd_res\"}")^"\n");
     flush oc;
     let r = input_line ic
     in Printf.printf "Response : %s\n\n" r;
@@ -1198,8 +1201,8 @@ let start_websocket host port_num () =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
   in
-  Lwt_io.eprintf "[SERV] Listening for HTTP on port_num %d\n%!" port_num >>= fun () ->
-  ignore (Cohttp_lwt_unix.Server.create
+  Lwt_io.eprintf "[SERV] Listening for HTTP on port_num %d\n%!" port_num
+  >>= fun () -> ignore (Cohttp_lwt_unix.Server.create
     ~mode:(`TCP (`Port port_num))
     (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ()));
   (* run the server *)
