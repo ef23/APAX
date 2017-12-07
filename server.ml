@@ -754,61 +754,66 @@ let handle_ae_res msg oc =
     get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
     let servid = match (id_from_oc !channels oc) with
-    | None -> "should be impossible"
-    | Some s -> s in
+        | None -> "should be impossible"
+        | Some s -> s in
+
     print_endline (servid ^"SERVID"); print_endline (string_of_int (List.length !get_ae_response_from));
-    if (success) then
+    
+    if (success) then 
     begin
-    match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
-    | None -> ()
-    | Some s ->
-        let last_entry_serv_committed =
-        match s with
-        | (o, r) ->
-            begin
-                try (List.hd (r.entries)).index with
-                | _ -> failwith "Impossible. Leader should always have at least one entry to send."
-            end in
-    let latest_ind_for_server =
-    match List.assoc_opt servid serv_state.match_index_lst with
-    | None -> (*serv_state.matchIndexList <-
-    (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*)
-    failwith "should not occur because we already update match index?"
-    | Some i -> i in
+        match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
+        | None -> ()
+        | Some s ->
+            let last_entry_serv_committed =
+            match s with
+            | (o, r) ->
+                begin
+                    try (List.hd (r.entries)).index with
+                    | _ -> failwith "Impossible. Leader should always have at least one entry to send."
+                end in
 
-    (*index responses is in decreasing log index, and it is (ind of entry, num servers
-    that contain that entry)*)
-    let num_to_add = match !index_responses with
-    | (indd, co)::t -> indd + 1
-    | [] -> 1 in
+        let latest_ind_for_server =
+            match List.assoc_opt servid serv_state.match_index_lst with
+            | None -> (*serv_state.matchIndexList <-
+            (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*)
+            failwith "should not occur because we already update match index?"
+            | Some i -> i in
 
-    let rec add_to_index_responses ind_to_add ind_to_stop =
-    if (ind_to_add >= ind_to_stop) then ()
+        (*index responses is in decreasing log index, and it is (ind of entry, num servers
+        that contain that entry)*)
+        let num_to_add = match !index_responses with
+            | (indd, co)::t -> indd + 1
+            | [] -> 1 in
+
+        let rec add_to_index_responses ind_to_add ind_to_stop =
+            if (ind_to_add >= ind_to_stop) then ()
+            else
+                (index_responses := (ind_to_add, 0)::!index_responses;
+                add_to_index_responses (ind_to_add + 1) ind_to_stop) in
+
+        add_to_index_responses num_to_add (last_entry_serv_committed);
+
+        index_responses := List.map (fun (ind, count) ->
+            if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
+            then (ind, (count + 1)) else (ind, count)) !index_responses
+    end 
+    
     else
-    (index_responses := (ind_to_add, 0)::!index_responses;
-    add_to_index_responses (ind_to_add + 1) ind_to_stop) in
-    add_to_index_responses num_to_add (last_entry_serv_committed);
+        force_conform servid;
+        let serv_id = match id_from_oc !channels oc with
+        | Some id -> id
+        | None -> failwith "oc should have corresponding id" in
+        let pli = get_p_log_idx () in
+        let plt = get_p_log_term () in
+        let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
+        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
-    index_responses := List.map (fun (ind, count) ->
-    if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
-    then (ind, (count + 1)) else (ind, count))
-    !index_responses
-    end else
-    force_conform servid;
-    let serv_id = match id_from_oc !channels oc with
-    | Some id -> id
-    | None -> failwith "oc should have corresponding id" in
-    let pli = get_p_log_idx () in
-    let plt = get_p_log_term () in
-    let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
-    get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
-
-    let total_num_servers = List.length serv_state.neighboring_ips in
-    let index_to_commit =
-    match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-    | None -> serv_state.commit_index
-    | Some (ind, count) -> ind in
-    serv_state.commit_index <- index_to_commit
+        let total_num_servers = List.length serv_state.neighboring_ips in
+        let index_to_commit =
+        match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
+        | None -> serv_state.commit_index
+        | Some (ind, count) -> ind in
+        serv_state.commit_index <- index_to_commit
 
 let handle_vote_req msg oc =
     (* at this point, the current leader has died, so need to delete leader *)
