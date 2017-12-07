@@ -120,14 +120,14 @@ let last_entry () =
     | [] -> None
     | (_, e)::_ -> Some e
 
-(* [get_p_log_idx ()] returns the 1-based index of the most recently added 
+(* [get_p_log_idx ()] returns the 1-based index of the most recently added
  * entry in the log *)
 let get_p_log_idx () =
     match last_entry () with
     | None -> 0
     | Some e -> e.index
 
-(* [get_p_log_term ()] returns the 1-based term of the most recently added 
+(* [get_p_log_term ()] returns the 1-based term of the most recently added
  * entry in the log *)
 let get_p_log_term () =
     match last_entry () with
@@ -144,7 +144,7 @@ let change_heartbeat () =
     let new_heartbeat = generate_heartbeat () in
     serv_state.heartbeat <- new_heartbeat
 
-(* [update_neighbors ips id] updates this server's neighboring IPs list with 
+(* [update_neighbors ips id] updates this server's neighboring IPs list with
  * [ips] TODO more on this later *)
 let update_neighbors ips id =
     serv_state.neighboring_ips <- ips;
@@ -839,7 +839,7 @@ let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
     let leader_commit = msg |> member "leader_commit" |> to_int in
 
-    (* if the leader ip that the client server has does not match current   
+    (* if the leader ip that the client server has does not match current
      * leader id, update the leader ip *)
     if (not serv_state.is_server) && !leader_ip <> l_id then leader_ip := l_id;
 
@@ -1005,6 +1005,7 @@ let main_client address portnum =
              let ip = "" in
              channels := ((ip, (ic, oc))::otherl);
              let iplistlen = List.length (serv_state.neighboring_ips) in
+             print_endline ("neighboring_ips: "^(string_of_int iplistlen));
              if (List.length !channels)=iplistlen && serv_state.is_server && (not serv_state.started)
              then (print_endline "connections good"; init_server ())
              else print_endline "not good";
