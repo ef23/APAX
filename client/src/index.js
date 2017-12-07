@@ -21,11 +21,13 @@ class App extends React.Component {
     this.openWebsocket = this.openWebsocket.bind(this);
   }
 
+  // this resets the state to display the ip page after a websocket failure, 
+  // i.e. client server closes or some error occurs
   failWebsocket() {
     this.setState({
         ip_address: "",
         box_text: "",
-        ip_page_msg: "Invalid IP! Either not a leader or the leader went down."
+        ip_page_msg: "Invalid IP! Either not the client server or it went down."
       });
   }
 
@@ -89,6 +91,8 @@ class App extends React.Component {
     }
   }
 
+  // two pages - one to set the ip of the client server to connect to, and another to send 
+  // updates to the server with a value, and to monitor the current latest value on the server.
   render () {
     let client = (
       <div className = "text-center">
