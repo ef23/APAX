@@ -430,7 +430,9 @@ let update_commit_index () =
         else if (mi_geq_n 0 (List.length l) n l) then find_n ub (n+1) n
         else find_n ub (n+1) high in
 
+    let old_ci = serv_state.commit_index in
     let n_ci = find_n ub init_N serv_state.commit_index in
+    assert (n_ci >= old_ci);
     serv_state.commit_index <- n_ci; ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
