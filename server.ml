@@ -1,10 +1,3 @@
-(** Multi-client server example.
-*
-*     Clients can increment a shared counter or read its current value.
-*
-*         Build with: ocamlfind ocamlopt -package lwt,lwt.unix -linkpkg -o server ./server.ml
-*          *)
-
 open Lwt
 open Websocket
 open Websocket_cohttp_lwt
@@ -128,14 +121,6 @@ let rec id_from_oc cl oc =
  * finds the nextIndex of server [id] *)
 let rec nindex_from_id id =
     List.assoc id serv_state.nextIndexList
-
-(* the lower range of the elec tion timeout, in th is case 150-300ms*)
-let generate_heartbeat () =
-    let lower = 1.00 in
-    let range = 2.00 in
-    let timer = (Random.float range) +. lower in
-    print_endline ("timer:"^(string_of_float timer));
-    timer
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
@@ -722,8 +707,7 @@ let handle_ae_res msg oc =
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
-
-    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
@@ -761,8 +745,9 @@ let handle_vote_res msg =
     let voted = msg |> member "vote_granted" |> to_bool in
     handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;
+    print_endline ("num clients " ^ (string_of_int num_clients));
     if serv_state.role <> Leader && !vote_counter >
-        ((((List.length serv_state.neighboringIPs) + 1) - num_clients) / 2)
+        ((((List.length serv_state.neighboringIPs)) - num_clients) / 2)
             then win_election ()
 
 (*[process_heartbeat msg] handles receiving heartbeats from the leader *)
@@ -792,7 +777,7 @@ let update_output_channels oc msg =
     channels := (ip, snd chans)::c_lst
 
 let handle_message msg oc =
-    print_endline ("here:"^msg);
+    print_endline ("received: "^msg);
     serv_state.received_heartbeat <- true;
     let msg = Yojson.Basic.from_string msg in
     let msg_type = msg |> member "type" |> to_string in
@@ -853,8 +838,9 @@ let handle_message msg oc =
                 leader_commit = serv_state.commitIndex;
             } in
 
-            (*TODgetO iterate through channel list and send rpc*)
-            (*TODO find oc and get the entries to send*)
+            let old_log = serv_state.log in
+            let new_idx = (List.length old_log) + 1 in
+            serv_state.log <- (new_idx,new_entry)::old_log;
 
             let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
             get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
@@ -920,7 +906,6 @@ let accept_connection conn =
     if (List.length !channels)=iplistlen&&(not serv_state.started)&&serv_state.is_server
     then init_server ();
     (* accept the client's connections so need to remap channels *)
-    if serv_state.started then setup_connections ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
