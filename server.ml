@@ -35,8 +35,8 @@ let index_responses = ref []
 
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 0.150 in
-    let range = 0.400 in
+    let lower = 5.150 in
+    let range = 2.400 in
     let timer = (Random.float range) +. lower in
     print_endline ("timer:"^(string_of_float timer));
     timer
@@ -72,11 +72,8 @@ let get_my_addr () =
 
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-let curr_role_thr = ref None
 
 let vote_counter = ref 0
-let response_count = ref 0
-let success_count = ref 0
 
 let channels = ref []
 
@@ -132,7 +129,7 @@ let get_p_log_idx () =
 let get_p_log_term () =
     match last_entry () with
     | None -> 0
-    | Some e -> e.entryTerm
+    | Some e -> e.entry_term
 
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
@@ -161,14 +158,13 @@ let hb_interval = (Lwt_unix.sleep 1.)
 
 let send_msg str oc =
     print_endline ("sending: "^str);
-    Lwt_io.write_line oc str; Lwt_io.flush oc;
-    Lwt.return(print_endline "help")
+    Lwt_io.write_line oc str; Lwt_io.flush oc
 
 let stringify_e (e:entry): string =
   let json =
     "{" ^
       "\"value\":" ^ (string_of_int e.value) ^ "," ^
-      "\"entryTerm\":" ^ (string_of_int e.entryTerm) ^ "," ^
+      "\"entry_term\":" ^ (string_of_int e.entry_term) ^ "," ^
       "\"index\":" ^ (string_of_int e.index) ^
     "}"
   in json
@@ -182,19 +178,24 @@ let nindex_from_id id =
 
 (* [oc] is the output channel to send to a server with an ip [ip] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
+    let string_entries = List.map (fun x -> stringify_e x) msg.entries in
+    let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
+    let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
+    (*let entries_str = (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries) in print_endline("ENTRIES STR " ^ entries_str);*)
     let json =
        "{" ^
         "\"type\": \"appd_req\"," ^
-        "\"term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ (msg.leader_id) ^ "," ^
+        "\"ap_term\":" ^ (string_of_int msg.ap_term) ^"," ^
+        "\"leader_id\":" ^ "\"" ^ (msg.leader_id) ^ "\"," ^
         "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
         "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^
-        (List.fold_left (fun a e -> (stringify_e e) ^ "\n" ^ a) "" msg.entries)
+        "\"entries\":" ^ final_entries_str
         ^ "," ^
         "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
       "}"
-    in send_msg json oc
+    in
+    print_endline ("ENTRIES LENGTH LIST"^string_of_int (List.length msg.entries));
+    send_msg json oc
 
 (*
 
@@ -221,20 +222,25 @@ let res_append_entries (ae_res:append_entries_res) oc =
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
  *)
-let json_es (entries:string): entry list =
-    let entries_str_lst =  Str.split (Str.regexp "[\n]+") entries in
+let json_es (entries): entry list =
+    let json = Yojson.Basic.Util.to_list entries in
+    let assoc_list = List.map (fun x -> Yojson.Basic.Util.to_assoc x) (json) in
+
+    (*let entries_str_lst =  Str.split (Str.regexp "[\n]+") entries in*)
     let extract_record e =
-        let json =  Yojson.Basic.from_string e in
-        let value = json |> member "value" |> to_int in
-        let entry_term = json |> member "entryTerm" |> to_int in
-        let ind = json |> member "index" |> to_int in
+        let value = Yojson.Basic.Util.to_int (List.assoc "value" e) in
+        print_endline ("value " ^ (string_of_int value));
+        let entry_term = Yojson.Basic.Util.to_int (List.assoc "entry_term" e) in
+        print_endline ("entry term " ^ (string_of_int entry_term));
+        let ind = Yojson.Basic.Util.to_int (List.assoc "index" e) in
+        print_endline ("ind" ^ string_of_int (ind));
         {
             value = value;
-            entryTerm = entry_term;
+            entry_term = entry_term;
             index = ind;
         }
     in
-    let ocaml_entries = List.map extract_record entries_str_lst in
+    let ocaml_entries = List.map extract_record assoc_list in
     ocaml_entries
 
 (* [send_rpcs f] recursively sends RPCs to every ip in [ips] using the
@@ -257,7 +263,7 @@ let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
     else
         match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
         | None -> true
-        | Some (_,e) -> if e.entryTerm = prev_log_term then false else true
+        | Some (_,e) -> if e.entry_term = prev_log_term then false else true
 
 (* [process_conflicts entries] goes through the server's log and removes entries
  * that conflict (same index different term) with those in [entries] *)
@@ -265,7 +271,7 @@ let process_conflicts entries =
     (* [does_conflict e1 e2] returns true if e1 has a different term than e2
      * -requires e1 and e2 to have the same index *)
     let does_conflict log_e new_e =
-        if log_e.entryTerm = new_e.entryTerm then false else true in
+        if log_e.entry_term = new_e.entry_term then false else true in
 
     (* given a new entry e, go through the log and return a new (shorter) log
      * if we find a conflict; otherwise return the original log *)
@@ -317,7 +323,7 @@ let rec append_new_entries (entries : entry list) : unit =
 let rec print_lst () = function
     | [] -> print_endline "endlist"
     | h::t -> match h with
-        | {value=v; entryTerm = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
+        | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
         | _ -> failwith "wot"
 
 let rec send_heartbeat oc () =
@@ -334,6 +340,11 @@ let rec send_heartbeat oc () =
         "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
         "}");
     Lwt_io.flush oc;
+    let id_of_oc occ =
+        match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
+        | Some (idd, (i, oo)) -> idd
+        | None -> "" in
+        List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg] creates an rpc to be sent to the servers based on the [msg]
@@ -480,7 +491,7 @@ let res_request_vote msg oc =
     (* match serv_state.lastEntry with
     | Some log ->
         let curr_log_ind = log.index in
-        let curr_log_term = log.entryTerm in
+        let curr_log_term = log.entry_term in
         let vote_granted = continue && otherTerm >= serv_state.curr_term &&
         last_log_index >= curr_log_ind && last_log_term >= curr_log_term in
         let json =
@@ -503,11 +514,7 @@ let send_heartbeats () =
       | [] -> () in
     print_endline "number of ocs";
     print_endline (string_of_int (List.length lst_o));
-    let id_of_oc occ =
-    match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
-    | Some (idd, (i, oo)) -> idd
-    | None -> "" in
-    List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ()) !get_ae_response_from;
+
     send_to_ocs lst_o
 
 (* [act_all ()] is a simple check that all servers perform regularly, regardless
@@ -700,12 +707,10 @@ let handle_ae_req msg oc =
     let leader_id = msg |> member "leader_id" |> to_string in
     let prev_log_index = msg |> member "prev_log_index" |> to_int in
     let prev_log_term = msg |> member "prev_log_term" |> to_int in
-    let entries = msg |> member "entries" |> to_string |> json_es in
+    let entries = msg |> member "entries" |> json_es in
     let leader_commit = msg |> member "leader_commit" |> to_int in
 
     handle_precheck ap_term;
-
-    print_endline (msg |> member "entries" |> to_string);
 
     let success_bool =
         if ap_term < serv_state.curr_term then false (* 1 *)
@@ -981,7 +986,7 @@ and handle_message msg oc =
 
         let new_entry = {
                 value = msg |> member "value" |> to_int;
-                entryTerm = serv_state.curr_term;
+                entry_term = serv_state.curr_term;
                 index = (get_p_log_idx ()) + 1;
             } in
 
