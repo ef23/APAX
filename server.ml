@@ -342,7 +342,8 @@ let rec send_heartbeat oc () =
     match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
     | Some (idd, (i, oo)) -> idd
     | None -> "" in
-    List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from;
+
+    List.iter (fun (oc, rpc) -> ignore (req_append_entries rpc (id_of_oc oc) oc); ())  !get_ae_response_from;
   Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
@@ -747,12 +748,6 @@ let handle_ae_req msg oc =
 let handle_ae_res msg oc =
     let curr_term = msg |> member "curr_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
-
-    let responder_id = (
-        match (id_from_oc !channels oc) with
-        | None -> failwith "not possible"
-        | Some x -> x
-    ) in
 
     handle_precheck curr_term;
 
