@@ -586,14 +586,14 @@ and init_leader () =
         match ips with
         | [] -> serv_state.match_index_lst <- build; ()
         | (inum,port)::t ->
-            let nbuild = (inum^(string_of_int port), 0)::build in
+            let nbuild = (inum^":"^(string_of_int port), 0)::build in
             build_match_index nbuild t in
 
     let rec build_next_index build ips n_idx =
         match ips with
         | [] -> serv_state.next_index_lst <- build; ()
         | (inum,port)::t ->
-            let nbuild = (inum^(string_of_int port), n_idx)::build in
+            let nbuild = (inum^":"^(string_of_int port), n_idx)::build in
             build_match_index nbuild t in
 
     print_endline "init leader";
