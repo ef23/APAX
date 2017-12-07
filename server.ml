@@ -8,6 +8,10 @@ open Yojson.Basic.Util
 
 type role = | Follower | Candidate | Leader
 
+type ip = (string*int) list (* (ip * port) *)
+type next_index = (string*int) list (* (id * next index) *)
+type match_index = (string*int) list (* (id * match index) *)
+
 type state = {
     mutable id : string;
     mutable leader_id: string;
@@ -18,10 +22,12 @@ type state = {
     mutable commitIndex : int;
     mutable lastApplied : int;
     mutable heartbeat : float;
-    mutable neighboringIPs : (string*int) list; (* ip * port *)
-    mutable nextIndexList : (string*int) list; (* id * next index *)
-    mutable matchIndexList : (string*int) list; (* id * match index *)
+    mutable neighboringIPs : ip;
+    mutable nextIndexList : next_index;
+    mutable matchIndexList : match_index;
     mutable received_heartbeat : bool;
+    mutable started : bool;
+    mutable is_server : bool;
 }
 
 let get_ae_response_from = ref []
@@ -51,6 +57,8 @@ let serv_state = {
     nextIndexList = [];
     matchIndexList = [];
     received_heartbeat = false;
+    started = false;
+    is_server = true;
 }
 
 (* TODO this needs to be here and not elsewhere kek *)
@@ -158,7 +166,8 @@ let hb_interval = (Lwt_unix.sleep 1.)
 
 let send_msg str oc =
     print_endline ("sending: "^str);
-    Lwt_io.write_line oc str; Lwt_io.flush oc
+    Lwt_io.write_line oc str; Lwt_io.flush oc;
+    Lwt.return(print_endline "help")
 
 let stringify_e (e:entry): string =
   let json =
@@ -614,7 +623,6 @@ and act_candidate () =
     start_election ();
     (* continuously check if election has completed and
      * listen for responses to the req_votes *)
-    print_endline (string_of_int (List.length serv_state.neighboringIPs));
     if ((List.length serv_state.neighboringIPs)-num_clients)<=1 then win_election ();
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> check_election_complete ())
 
@@ -657,7 +665,6 @@ and init_follower () =
 (* [win_election ()] transitions the server from a candidate to a leader and
  * executes the appropriate actions *)
 and win_election () =
-    print_endline "ayyyy";
     (* transition to Leader role *)
     serv_state.role <- Leader;
     (* send heartbeats *)
@@ -737,8 +744,7 @@ let handle_ae_res msg oc =
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
-
-    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
@@ -833,10 +839,6 @@ let handle_message msg oc =
         send_msg res oc; ()
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
-        (* TODO redirect client to Leader *)
-        if serv_state.role <> Leader then
-            (print_endline serv_state.leader_id; ())
-        else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
             let rpc = create_rpc msg in
@@ -877,20 +879,21 @@ let send_ip oc =
     in
     send_msg json oc
 
+let setup_connections () =
+    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
+    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
+    List.iter
+    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans
+
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-
-    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
-    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
-    List.iter
-    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
-    print_endline "after list";
-    init_follower ();
-    print_endline "rigth before"
+    setup_connections ();
+    serv_state.started <- true;
+    init_follower ()
 
 let accept_connection conn =
    print_endline "accepted";
@@ -900,9 +903,11 @@ let accept_connection conn =
     let otherl = !channels in
     let ip = "" in
     channels := ((ip, (ic, oc))::otherl);
-    let iplistlen = List.length (serv_state.neighboringIPs) in
-    print_endline (string_of_int iplistlen);
-    if (List.length !channels) = iplistlen then init_server ();
+
+    let iplistlen = (List.length (serv_state.neighboringIPs)-num_clients) in
+    if (List.length !channels)=iplistlen&&(not serv_state.started)&&serv_state.is_server
+    then init_server ();
+    (* accept the client's connections so need to remap channels *)
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -931,7 +936,7 @@ let create_socket portnum () =
     listen sock backlog;
     sock
 
-let main_client address portnum is_server =
+let main_client address portnum =
     try
         let sockaddr = Lwt_unix.ADDR_INET(Unix.inet_addr_of_string address, portnum) in
         print_endline "main client";
@@ -940,16 +945,17 @@ let main_client address portnum is_server =
         let otherl = !channels in
              let ip = "" in
              channels := ((ip, (ic, oc))::otherl);
-             let iplistlen = (List.length (serv_state.neighboringIPs))-1 in
-
-             if (List.length !channels)=iplistlen && is_server then (print_endline "connections good"; init_server ()) else print_endline "not good";
+             let iplistlen = ((List.length (serv_state.neighboringIPs))-num_clients) in
+             if (List.length !channels)=iplistlen && serv_state.is_server && (not serv_state.started)
+             then (print_endline "connections good"; init_server ())
+             else print_endline "not good";
 
         Lwt_log.info "added connection" >>= return
     with
         Failure("int_of_string") -> Printf.printf "bad port number";
                                         exit 2 ;;
 
-let establish_connections_to_others is_server =
+let establish_connections_to_others () =
     print_endline "establish";
     let ip_ports_list = serv_state.neighboringIPs in
     let rec get_connections lst =
@@ -957,27 +963,22 @@ let establish_connections_to_others is_server =
         | [] -> ()
         | (ip_addr, portnum)::t ->
         begin
-            print_endline "in begin";
-            main_client ip_addr portnum is_server;
+            main_client ip_addr portnum;
             get_connections t;
         end
     in get_connections ip_ports_list
 
 let create_server sock =
     let rec serve () =
-        print_endline "i am waiting for connections";
         Lwt_unix.accept sock >>= accept_connection >>= serve
     in serve
-
 
 let rec st port_num =
     serv_state.id <- ((Unix.string_of_inet_addr (get_my_addr ())) ^ ":" ^ (string_of_int port_num));
     read_neighboring_ips port_num;
-    establish_connections_to_others true;
-    print_endline "i finished";
+    establish_connections_to_others ();
     let sock = create_socket port_num () in
     let serve = create_server sock in
-    print_endline "running";
     Lwt_main.run @@ serve ();;
 
 let _ = Random.self_init()
@@ -990,7 +991,28 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
-let rec send_msg_from_client msg =
+(* let rec send_msg_from_client msg querying_leader =
+    if (!leader_ip="") then
+        match querying_leader with
+        | true ->  Lwt.on_termination (Lwt_unix.sleep 1.)
+                        (fun () -> print_endline "waiting for res"; (send_msg_from_client msg true));
+        | false ->
+            let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
+            List.iter
+            (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+            (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
+            let find_ip_json = "{\"type\":\"find_leader\"}" in
+            match List.nth_opt !channels 0 with
+            | Some (ip, (ic, oc)) -> send_msg find_ip_json oc;
+                                     send_msg_from_client msg true
+            | None -> ()
+    else match (List.assoc_opt !leader_ip !channels) with
+            | None -> ()
+            | Some (ic, oc) ->
+                let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
+                send_msg new_val_json oc; () *)
+
+let rec send_msg_from_client msg kek=
     if (!leader_ip="") then
         begin
             let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
@@ -1015,8 +1037,6 @@ let handler
   Lwt_io.eprintf
         "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
   >>= fun _ ->
-(*   let headers = req |> Cohttp.Request.headers |> Cohttp.Header.to_string in
-  print_endline headers; *)
   let uri = Cohttp.Request.uri req in
   match Uri.path uri with
   | "/" ->
@@ -1031,18 +1051,17 @@ let handler
                 Printf.eprintf "[RECV] CLOSE\n%!"
             | _ ->
                 (* do this shit here where u set append entries i guess *)
-                send_msg_from_client f.content;
+                send_msg_from_client f.content false;
                 Printf.eprintf "[RECV] %s\n%!" f.content
     );
     >>= fun (resp, body, frames_out_fn) ->
     (* send a message to the client *)
     let _ =
             (* replace msg with latest value from server *)
-            let msg = Printf.sprintf "connected!" in
             Lwt_io.eprintf "[SEND] %s\n%!" !res_client_msg
             >>= fun () ->
             Lwt.wrap1 frames_out_fn @@
-                Some (Frame.create ~content:msg ())
+                Some (Frame.create ~content:!res_client_msg ())
             >>= Lwt.return
     in
     Lwt.return (resp, (body :> Cohttp_lwt_body.t))
@@ -1055,8 +1074,9 @@ let handler
         ()
 
 let start_websocket host port_num () =
+  serv_state.is_server <- false;
   read_neighboring_ips port_num;
-  establish_connections_to_others false;
+  establish_connections_to_others ();
   let sock = create_socket (port_num+1) () in
   let serve = create_server sock in
   let conn_closed (ch,_) =
