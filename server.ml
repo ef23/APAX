@@ -154,7 +154,7 @@ let update_neighbors ips id =
  * output channel [oc] *)
 let send_msg str oc =
     print_endline ("sending: "^str);
-    Lwt_io.write_line oc str; Lwt_io.flush oc
+    ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
 
 (* [stringify_e e] converts an entry record [e] to a string *)
 let stringify_e (e:entry): string =
@@ -314,14 +314,12 @@ let rec print_lst () = function
     | [] -> print_endline "endlist"
     | h::t -> match h with
         | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
-        | _ -> failwith "wot"
 
 (* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
  * output channel [oc] *)
 let rec send_heartbeat oc () =
     print_lst () (List.map (fun (x,y) -> y) serv_state.log);
-    let temp_str = "kek" in
-    Lwt_io.write_line oc (
+    ignore (Lwt_io.write_line oc (
         "{" ^
         "\"type\":\"heartbeat\"," ^
         "\"leader_id\":" ^ "\"" ^ serv_state.id ^ "\"" ^ "," ^
@@ -330,8 +328,8 @@ let rec send_heartbeat oc () =
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
         "\"entries\": \"\"," ^
         "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
-        "}");
-    Lwt_io.flush oc;
+        "}"));
+    ignore (Lwt_io.flush oc);
     let id_of_oc occ =
         match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
         | Some (idd, (i, oo)) -> idd
@@ -474,8 +472,6 @@ let res_request_vote msg oc =
                     | None -> true
                     | Some id -> print_endline id; print_endline candidate_id; id=candidate_id in
     let otherTerm = msg |> member "term" |> to_int in
-    let last_log_term = msg |> member "last_log_term" |> to_int in
-    let last_log_index = msg |> member "last_log_index" |> to_int in
     let vote_granted = continue && otherTerm >= serv_state.curr_term in
     if (vote_granted) then serv_state.voted_for <- (Some candidate_id);
     let json =
@@ -551,7 +547,6 @@ let rec start_election () =
     serv_state.curr_term <- curr_term + 1;
     serv_state.voted_for <- (Some serv_state.id);
     vote_counter := 1;
-    let neighbors = serv_state.neighboring_ips in
     (* ballot is a vote_req *)
     let ballot = {
         term = serv_state.curr_term;
@@ -698,7 +693,6 @@ let handle_precheck t =
 
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
-    let leader_id = msg |> member "leader_id" |> to_string in
     let prev_log_index = msg |> member "prev_log_index" |> to_int in
     let prev_log_term = msg |> member "prev_log_term" |> to_int in
     let entries = msg |> member "entries" |> json_es in
@@ -823,7 +817,7 @@ let handle_vote_req msg oc =
     print_endline (string_of_bool (serv_state.role = Follower));
     let t = msg |> member "term" |> to_int in
     handle_precheck t;
-    res_request_vote msg oc; ()
+    ignore (res_request_vote msg oc); ()
 
 (* [handle_vote_res msg] handles receiving a vote response message *)
 let handle_vote_res msg =
@@ -881,7 +875,7 @@ let handle_message msg oc =
                         print_endline "received app";
                         if serv_state.role = Candidate
                         then ignore (lose_election ());
-                        handle_ae_req msg oc;
+                        ignore (handle_ae_req msg oc);
                         ()
                     end
     | "appd_res" -> handle_ae_res msg oc; ()
@@ -889,7 +883,7 @@ let handle_message msg oc =
         let res_id = if (serv_state.role = Leader) then serv_state.id
         else serv_state.leader_id in
         let res = "{\"type\": \"find_leader_res\", \"leader\": \""^res_id^"\"}" in
-        send_msg res oc; ()
+        ignore (send_msg res oc); ()
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
         (* create the append_entries_rpc *)
@@ -941,7 +935,7 @@ let send_ip oc =
     send_msg json oc
 
 let setup_connections () =
-    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
+    List.iter (fun (_,(_,oc)) -> ignore (send_ip oc); ()) !channels;
     let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
     List.iter
     (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
@@ -993,7 +987,7 @@ let rec query_server ic oc =
 let create_socket portnum () =
     let open Lwt_unix in
     let sock = socket PF_INET SOCK_STREAM 0 in
-    bind sock @@ ADDR_INET(listen_address, portnum);
+    ignore (bind sock @@ ADDR_INET(listen_address, portnum));
     listen sock backlog;
     sock
 
@@ -1014,7 +1008,7 @@ let main_client address portnum =
 
         Lwt_log.info "added connection" >>= return
     with
-        Failure("int_of_string") -> Printf.printf "bad port number";
+        Failure _ -> Printf.printf "bad port number";
                                         exit 2 ;;
 
 let establish_connections_to_others () =
@@ -1025,7 +1019,7 @@ let establish_connections_to_others () =
         | [] -> ()
         | (ip_addr, portnum)::t ->
         begin
-            main_client ip_addr portnum;
+            ignore (main_client ip_addr portnum);
             get_connections t;
         end
     in get_connections ip_ports_list
@@ -1075,7 +1069,7 @@ let rec send_msg_from_client msg querying_leader =
             (* send the json requesting for the leader ip *)
             let find_ip_json = "{\"type\":\"find_leader\"}" in
             match List.nth_opt !channels 0 with
-            | Some (ip, (ic, oc)) -> send_msg find_ip_json oc;
+            | Some (ip, (ic, oc)) -> ignore (send_msg find_ip_json oc);
                                      send_msg_from_client msg true
             | None -> ()
     (* otherwise, send the new updated value to be entered to the leader *)
@@ -1083,7 +1077,7 @@ let rec send_msg_from_client msg querying_leader =
             | None -> ()
             | Some (ic, oc) ->
                 let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
-                send_msg new_val_json oc; ()
+                ignore (send_msg new_val_json oc); ()
 
 (* [handler conn req body] is the handler for the websocket connections, in
  * sending and receiving messages from the web client.
@@ -1160,9 +1154,9 @@ let start_websocket host port_num () =
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
   in
   Lwt_io.eprintf "[SERV] Listening for HTTP on port_num %d\n%!" port_num >>= fun () ->
-  Cohttp_lwt_unix.Server.create
+  ignore (Cohttp_lwt_unix.Server.create
     ~mode:(`TCP (`Port port_num))
-    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ());
+    (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ()));
   (* run the server *)
   Lwt_main.run @@ serve ()
 
