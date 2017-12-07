@@ -892,16 +892,19 @@ let send_ip oc =
     in
     send_msg json oc
 
+let setup_connections () =
+    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
+    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
+    List.iter
+    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans
+
 (* [init_server ()] starts up this server as a follower and anticipates an
  * election. That is, this should ONLY be called as soon as the server begins
  * running (and after it has set up connections with all other servers) *)
 let init_server () =
-    List.iter (fun (_,(_,oc)) -> send_ip oc; ()) !channels;
     change_heartbeat ();
-    let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
-    List.iter
-    (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
+    setup_connections ();
     serv_state.started <- true;
     init_follower ()
 
@@ -916,6 +919,8 @@ let accept_connection conn =
     let iplistlen = (List.length (serv_state.neighboringIPs)-num_clients) in
     if (List.length !channels)=iplistlen&&(not serv_state.started)&&serv_state.is_server
     then init_server ();
+    (* accept the client's connections so need to remap channels *)
+    if serv_state.started then setup_connections ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
@@ -1019,6 +1024,7 @@ let _ = Random.self_init()
             | Some (ic, oc) ->
                 let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
                 send_msg new_val_json oc; () *)
+
 let rec send_msg_from_client msg kek=
     if (!leader_ip="") then
         begin
