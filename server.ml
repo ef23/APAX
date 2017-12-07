@@ -446,6 +446,7 @@ let check_majority () =
         | Some (ind, count) -> ind in
         serv_state.commit_index <- index_to_commit
 
+
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            MAIN SERVER FUNCTIONS
@@ -822,6 +823,7 @@ let handle_ae_res msg oc =
         print_endline ("CHCK MAJORITY ELSE");
         check_majority ();
         get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+
     end
 
 let handle_vote_req msg oc =
