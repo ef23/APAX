@@ -41,9 +41,6 @@ let generate_heartbeat () =
     print_endline ("timer:"^(string_of_float timer));
     timer
 
-let get_my_addr () =
-    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
-
 let serv_state = {
     id = "";
     leader_id = "";
@@ -62,7 +59,6 @@ let serv_state = {
     is_server = true;
 }
 
-(* TODO this needs to be here and not elsewhere kek *)
 let get_my_addr () =
     (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
@@ -130,9 +126,6 @@ let get_p_log_term () =
     match last_entry () with
     | None -> 0
     | Some e -> e.entry_term
-
-let get_my_addr () =
-    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 let full_addr_str port_num =
     Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
