@@ -1,6 +1,6 @@
 First, https://github.com/vbmithr/ocaml-websocket must be cloned and built according to its `README`. This may require a bunch of dependencies during the build process. This is the only third party dependency we have (aside from `Lwt` and `Yojson`).
 
-Next, a simple make compile should do in order to compile the project.
+Next, extract the contents of ocamlinit and put it in a .ocamlinit file. Then, a simple make compile should do in order to compile the project.
 
 Next, navigate to client/ and run `npm install` in order to install the npm dependencies required for the web client frontend. This of course requires `npm` to be installed. Then, run `npm start`.
 
