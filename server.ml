@@ -720,6 +720,11 @@ let handle_ae_req msg oc =
 
     res_append_entries ae_res oc
 
+let print_index_responses () = 
+    List.iter 
+    (fun (x, y) -> print_endline ("ind: " ^ (string_of_int x) ^ " and count " ^ string_of_int y) )
+    !index_responses
+
 let handle_ae_res msg oc =
     let curr_term = msg |> member "curr_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
@@ -790,7 +795,8 @@ let handle_ae_res msg oc =
     index_responses := List.map (fun (ind, count) ->
     if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
     then (ind, (count + 1)) else (ind, count))
-    !index_responses
+    !index_responses;
+    print_index_responses ();
     end else
     force_conform servid;
     let serv_id = match id_from_oc !channels oc with
@@ -802,10 +808,11 @@ let handle_ae_res msg oc =
     get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
     let total_num_servers = List.length serv_state.neighboring_ips in
+    print_endline ("total_num_servers" ^ (string_of_int total_num_servers));
     let index_to_commit =
     match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-    | None -> serv_state.commit_index
-    | Some (ind, count) -> ind in
+    | None -> (print_endline "none"; serv_state.commit_index)
+    | Some (ind, count) -> (print_endline ("ind" ^ string_of_int ind);ind) in
     serv_state.commit_index <- index_to_commit
 
 let handle_vote_req msg oc =
