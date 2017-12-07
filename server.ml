@@ -118,13 +118,6 @@ let rec id_from_oc cl oc =
     | [] -> None
     | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
-(* [nindex_from_id id] takes a server id [id] and the next_index_lst and
- * finds the nextIndex of server [id] *)
-let rec nindex_from_id id =
-    match List.assoc_opt id serv_state.next_index_lst with
-    | None -> print_endline "you fucking idiot"; -1
-    | Some i -> i
-
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
@@ -181,10 +174,11 @@ let stringify_e (e:entry): string =
     "}"
   in json
 
-let nindex_from_id ip =
-    print_endline ip;
-    match List.assoc_opt ip serv_state.next_index_lst with
-    | None -> print_endline "adsfjdkglkjg AHAHAHHAA"; -1
+(* [nindex_from_id id] takes a server id [id] and the next_index_lst and
+ * finds the nextIndex of server [id] *)
+let nindex_from_id id =
+    match List.assoc_opt id serv_state.next_index_lst with
+    | None -> -1
     | Some i -> i
 
 (* [oc] is the output channel to send to a server with an ip [ip] *)
@@ -322,7 +316,7 @@ let rec append_new_entries (entries : entry list) : unit =
     append_new entries
 
 let rec send_heartbeat oc () =
-    print_endline "sending heartbeat";
+    (* print_endline "sending heartbeat"; *)
     let temp_str = "kek" in
     Lwt_io.write_line oc (
         "{" ^
@@ -386,7 +380,7 @@ let rec update_match_index oc =
         (* basically rebuild the entire matchIndex list lol *)
         let rec apply build mi_list idx =
             match mi_list with
-            | [] -> failwith "this should literally never happen lol kill me"
+            | [] -> failwith "this should literally never happen"
             | (s,i)::t ->
                 if s = idx then
                     (* note: nextIndex - matchIndex > 1 if and only if a new
@@ -588,17 +582,11 @@ and init_leader () =
         | [] -> serv_state.next_index_lst <- build
         | (inum,port)::t ->
             let nbuild = (inum^":"^(string_of_int port), n_idx)::build in
-            build_match_index nbuild t in
-
+            build_next_index nbuild t n_idx in
     print_endline "init leader";
     build_match_index [] serv_state.neighboring_ips;
     let n_idx = (get_p_log_idx ()) + 1 in
     build_next_index [] serv_state.neighboring_ips n_idx;
-
-    assert (List.length serv_state.neighboring_ips > 0);
-    assert (List.length serv_state.match_index_lst > 0);
-    assert (List.length serv_state.next_index_lst > 0);
-
     act_leader ();
 
 (* [act_candidate ()] executes all candidate responsibilities, namely sending
@@ -749,60 +737,60 @@ let handle_ae_res msg oc =
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
 
-    get_ae_response_from := (List.remove_assq oc !get_ae_response_from); 
+    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
-    let servid = match (id_from_oc !channels oc) with 
+    let servid = match (id_from_oc !channels oc) with
     | None -> "should be impossible"
     | Some s -> s in
 
-    if (success) then 
-    (let rpc_mes = List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from in 
+    if (success) then
+    (let rpc_mes = List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from in
 
-    let last_entry_serv_committed = 
-    match rpc_mes with 
-    | (o, r) -> 
-        begin 
-            try (List.hd (r.entries)).index with 
-            | _ -> failwith "Impossible. Leader should always have at least one entry to send." 
-        end 
-    in 
+    let last_entry_serv_committed =
+    match rpc_mes with
+    | (o, r) ->
+        begin
+            try (List.hd (r.entries)).index with
+            | _ -> failwith "Impossible. Leader should always have at least one entry to send."
+        end
+    in
 
-    let latest_ind_for_server = 
+    let latest_ind_for_server =
     match List.assoc_opt servid serv_state.match_index_lst with
-    | None -> (*serv_state.matchIndexList <- 
-    (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*) 
+    | None -> (*serv_state.matchIndexList <-
+    (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*)
     failwith "should not occur because we already update match index?"
     | Some i -> i in
 
     (*index responses is in decreasing log index, and it is (ind of entry, num servers
     that contain that entry)*)
-    let num_to_add = match !index_responses with 
+    let num_to_add = match !index_responses with
     | (indd, co)::t -> indd + 1
-    | [] -> 1 in 
+    | [] -> 1 in
 
-    let rec add_to_index_responses ind_to_add ind_to_stop = 
-    if (ind_to_add >= ind_to_stop) 
-    then () 
-    else 
-    (index_responses := (ind_to_add, 0)::!index_responses; 
-    add_to_index_responses (ind_to_add + 1) ind_to_stop) in 
+    let rec add_to_index_responses ind_to_add ind_to_stop =
+    if (ind_to_add >= ind_to_stop)
+    then ()
+    else
+    (index_responses := (ind_to_add, 0)::!index_responses;
+    add_to_index_responses (ind_to_add + 1) ind_to_stop) in
 
     add_to_index_responses num_to_add (last_entry_serv_committed);
 
-    index_responses := List.map (fun (ind, count) -> 
-    if (ind > latest_ind_for_server && ind <= last_entry_serv_committed) 
+    index_responses := List.map (fun (ind, count) ->
+    if (ind > latest_ind_for_server && ind <= last_entry_serv_committed)
     then (ind, (count + 1)) else (ind, count))
-    !index_responses) else 
+    !index_responses) else
     force_conform servid;
-    let serv_id = match id_from_oc !channels oc with 
+    let serv_id = match id_from_oc !channels oc with
     | Some id -> id
-    | None -> failwith "oc should have corresponding id" in 
-    let tuple_to_add = (oc, create_rpc msg serv_id) in 
+    | None -> failwith "oc should have corresponding id" in
+    let tuple_to_add = (oc, create_rpc msg serv_id) in
     get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
-    let total_num_servers = List.length serv_state.neighboring_ips in 
-    let index_to_commit_tup = List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses in 
-    let index_to_commit = fst index_to_commit_tup in 
+    let total_num_servers = List.length serv_state.neighboring_ips in
+    let index_to_commit_tup = List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses in
+    let index_to_commit = fst index_to_commit_tup in
     serv_state.commit_index <- index_to_commit
 
 let handle_vote_req msg oc =
@@ -1035,27 +1023,41 @@ let _ = Random.self_init()
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
+(* [send_msg_from_client msg querying_leader] sends a message to the ip, and
+ * also handles leader redirection.
+ *)
 let rec send_msg_from_client msg querying_leader =
+    (* this condition is true if leader has not been found yet *)
     if (!leader_ip="") then
         match querying_leader with
+        (* true if we are waiting for a response in order to wait to assign
+         * the leader ip. *)
         | true ->  Lwt.on_termination (Lwt_unix.sleep 1.)
-                        (fun () -> print_endline "waiting for res"; (send_msg_from_client msg true));
+                        (fun () -> (send_msg_from_client msg true));
+        (* otherwise, send an rpc to the first server to ask for the leader ip
+         * and assign it.*)
         | false ->
+            (* open the output channels *)
             let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
             List.iter
             (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
             (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
+            (* send the json requesting for the leader ip *)
             let find_ip_json = "{\"type\":\"find_leader\"}" in
             match List.nth_opt !channels 0 with
             | Some (ip, (ic, oc)) -> send_msg find_ip_json oc;
                                      send_msg_from_client msg true
             | None -> ()
+    (* otherwise, send the new updated value to be entered to the leader *)
     else match (List.assoc_opt !leader_ip !channels) with
             | None -> ()
             | Some (ic, oc) ->
                 let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
                 send_msg new_val_json oc; ()
 
+(* [handler conn req body] is the handler for the websocket connections, in
+ * sending and receiving messages from the web client.
+ *)
 let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
     (req  : Cohttp_lwt_unix.Request.t)
@@ -1068,6 +1070,7 @@ let handler
         "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
   >>= fun _ ->
   let uri = Cohttp.Request.uri req in
+  (* websocket will connect to this url and will listen on this uri *)
   match Uri.path uri with
   | "/" ->
     Lwt_io.eprintf "[PATH] \n%!"
@@ -1080,7 +1083,8 @@ let handler
             | Frame.Opcode.Close ->
                 Printf.eprintf "[RECV] CLOSE\n%!"
             | _ ->
-                (* do this shit here where u set append entries i guess *)
+                (* send the message from the client to commit to rest of server
+                 *)
                 send_msg_from_client f.content false;
                 Printf.eprintf "[RECV] %s\n%!" f.content
     );
@@ -1103,12 +1107,20 @@ let handler
         ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
         ()
 
+(* [start_websocket host port_num] begins a websocket on the given host and port
+ * The purpose is for the web client to connect to this to interface with the
+ * other server. This will communicate with the rest of the server cluster
+ * on port (port_num + 1). Have the web client connect on ip:port_num
+ *)
 let start_websocket host port_num () =
+  (* initialize the client server to connect to all the servers on the list *)
   serv_state.is_server <- false;
   read_neighboring_ips port_num;
   establish_connections_to_others ();
   let sock = create_socket (port_num+1) () in
   let serve = create_server sock in
+
+  (* begin the websocket *)
   let conn_closed (ch,_) =
     Printf.eprintf "[SERV] connection %s closed\n%!"
       (Sexplib.Sexp.to_string_hum (Conduit_lwt_unix.sexp_of_flow ch))
@@ -1117,8 +1129,10 @@ let start_websocket host port_num () =
   Cohttp_lwt_unix.Server.create
     ~mode:(`TCP (`Port port_num))
     (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ());
+  (* run the server *)
   Lwt_main.run @@ serve ()
 
+(* [start_client] begins the client server, by default, localhost:3001 *)
 let start_client () =
     start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
 
