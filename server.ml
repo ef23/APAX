@@ -138,17 +138,6 @@ let update_neighbors ips id =
     serv_state.neighboring_ips <- ips;
     serv_state.id <- id
 
-let channels = ref []
-
-(* oc, rpc  *)
-let listen_address = get_my_addr ()
-let port = 9000
-let backlog = 10
-
-let () = Lwt_log.add_rule "*" Lwt_log.Info
-
-let hb_interval = (Lwt_unix.sleep 1.)
-
 let send_msg str oc =
     print_endline ("sending: "^str);
     Lwt_io.write_line oc str; Lwt_io.flush oc
