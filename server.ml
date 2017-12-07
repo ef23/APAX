@@ -846,6 +846,10 @@ let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
     let leader_commit = msg |> member "leader_commit" |> to_int in
 
+    (* if the leader ip that the client server has does not match current   
+     * leader id, update the leader ip *)
+    if (not serv_state.is_server) && !leader_ip <> l_id then leader_ip := l_id;
+
     if leader_commit > serv_state.commit_index
     then begin
             serv_state.leader_id <- l_id;
@@ -1092,7 +1096,6 @@ let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
     (req  : Cohttp_lwt_unix.Request.t)
     (body : Cohttp_lwt_body.t) =
-    print_endline "entered handler";
   if !conn_ws = None then conn_ws := Some conn;
   if !req_ws = None then req_ws := Some req;
   if !body_ws = None then body_ws := Some body;
