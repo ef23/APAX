@@ -141,7 +141,7 @@ let change_heartbeat () =
   serv_state.heartbeat <- new_heartbeat
 
 (* [update_neighbors ips id] updates this server's neighboring IPs list with
- * [ips] TODO more on this later *)
+ * [ips] and updates the server's [id] *)
 let update_neighbors ips id =
   serv_state.neighboring_ips <- ips;
   serv_state.id <- id
@@ -866,7 +866,9 @@ let process_heartbeat msg =
         end
     else serv_state.leader_id <- l_id; serv_state.voted_for <- None
 
-(* TODO document *)
+(* [update_output_channels oc msg] is for all servers.
+ * Updates the output channels list with the ip
+ * the output channel [oc] belongs to. It parses the [msg] for the ip. *)
 let update_output_channels oc msg =
     let ip = msg |> member "ip" |> to_string in
     let chans = List.find (fun (_, (_, orig_oc)) -> orig_oc == oc) !channels in

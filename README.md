@@ -25,7 +25,7 @@ features include:
 - Leader election for when the current leader fails
 - Dynamic leader redirection for client-side access
 
-## System Design}
+## System Design
 System Design:
 The core of the system lies in the distributed servers and the consensus algorithm that ensures uniform agreement on the data state. The main pieces that constitute this server-side architecture include the server, log, append entries request and response, and request vote request and response modules, with their general purposes discussed below.
 
@@ -72,7 +72,6 @@ The two major components of the Raft algorithm (and thus our project) are Leader
 - Leader Election. Having confirmed the ability to send information from one server to another, we test Leader Election by initializing 3 servers (as Followers, per the algorithm) with randomized timeouts and observe that one of them is elected and begins sending heartbeats in order to establish its authority amongst the un-elected servers. We also test the ability for our servers to re-elect themselves when the Leader stops sending heartbeats (i.e. in the event of failure) by stopping the Leader server and observing as the remaining Follower servers timeout and start a new election and find a new Leader.
 
 - Log Replication. With Leader Election working, we now proceed to test Log Replication, which ensures that the servers maintain a consensus. A client is set up as a server that can send messages to the Leader (which are formatted as JSON-parsable strings and processed by the Leader accordingly) with the goal of updating the value of the server cluster. Once the Leader sends out requests and processes replies from the Followers according to the algorithm, it will notify the client of the updated value, which will indicate that log replication was sustained correctly under normal circumstances. We then stop the Leader server from running, allow the election of a new Leader, and observe that the value still has not changed within the cluster because the original Leader's log was replicated successfully on all Followers. This completes our check for correctness in our log replication implementation.
-\end{enumerate
 
 ## Division of labor
 
@@ -87,10 +86,10 @@ The core features (as stated in the system description) are listed, along with t
 
 Hours were evenly distributed due to allocation of work hours in which everyone would be available to meet. They are distributed as follows:
 
-- Andy: 40 hours
-- Eric: 40 hours
-- Maria: 40 hours
-- Janice: 40 hours
+- Andy: 60 hours
+- Eric: 60 hours
+- Maria: 60 hours
+- Janice: 60 hours
 
 ## Weekly workflow
 Mon Wed meetings after 3110 Discussion
