@@ -339,7 +339,7 @@ let rec send_heartbeat oc () =
  * containing the value the client wants to add as well as the leader's term and
  * the index of the entry in the log. Only the leader should call this function
  *)
-let create_rpc msg =
+let create_rpc msg id =
     let p_log_idx = get_p_log_idx () in
         let p_log_term = get_p_log_term () in
         let new_entry = {
@@ -353,7 +353,7 @@ let create_rpc msg =
         serv_state.log <- (new_idx,new_entry)::old_log;
 
         let e = [] in
-        let next_index = nindex_from_id serv_state.id in
+        let next_index = nindex_from_id id in
         let entries_ =
             let rec add_relevant es = function
             | [] -> es
@@ -845,15 +845,8 @@ let handle_message msg oc =
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
             (* create the append_entries_rpc *)
-            (* using 0 to indicate no previous entry *)
-            let rpc = create_rpc msg in
-
-            let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
-            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
-
-            (* add the request to the list such that early requests are at the
-             * beginning of the list *)
-            ae_req_to_count := (!ae_req_to_count @ [(rpc, 0)]); ()
+            let output_channels_to_rpc = List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
+            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
