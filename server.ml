@@ -760,8 +760,8 @@ let handle_ae_res msg oc =
         | Some s -> s in
 
     print_endline (servid ^"SERVID"); print_endline (string_of_int (List.length !get_ae_response_from));
-    
-    if (success) then 
+
+    if (success) then
     begin
         match List.find_opt (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with
         | None -> ()
@@ -806,10 +806,16 @@ let handle_ae_res msg oc =
         let pli = get_p_log_idx () in
         let plt = get_p_log_term () in
         let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
-        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[])
+        get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
         check_majority ()
     end
-    
+
+(* [handle_vote_req msg oc] handles receiving a vote request from a candidate.
+ * This will generally set the server's state to be a follower and proceed
+ * with a new election.
+ * requires:
+ *     -[msg] is a valid vote_res json
+ *)
 let handle_vote_req msg oc =
     (* at this point, the current leader has died, so need to delete leader *)
     process_leader_death ();
@@ -819,7 +825,10 @@ let handle_vote_req msg oc =
     handle_precheck t;
     ignore (res_request_vote msg oc); ()
 
-(* [handle_vote_res msg] handles receiving a vote response message *)
+(* [handle_vote_res msg] handles receiving a vote response message
+ * requires:
+ *   -[msg] is a valid vote_res json
+ *)
 let handle_vote_res msg =
     print_endline "handling vote res!";
     let currTerm = msg |> member "curr_term" |> to_int in
@@ -830,7 +839,10 @@ let handle_vote_res msg =
         (((List.length serv_state.neighboring_ips)) / 2)
             then win_election ()
 
-(*[process_heartbeat msg] handles receiving heartbeats from the leader *)
+(*[process_heartbeat msg] handles receiving heartbeats from the leader
+ * requires:
+ *   -[msg] is a valid json with "leader_id" and "leader_commit" fields
+ *)
 let process_heartbeat msg =
     let l_id = msg |> member "leader_id" |> to_string in
     let leader_commit = msg |> member "leader_commit" |> to_int in
@@ -918,6 +930,7 @@ let handle_message msg oc =
  *                                                                           *
  *                                                                           *
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
+
 
 let rec handle_connection ic oc () =
     Lwt_io.read_line_opt ic >>=
@@ -1055,89 +1068,86 @@ let _ = Random.self_init()
  * also handles leader redirection.
  *)
 let rec send_msg_from_client msg querying_leader =
-    (* this condition is true if leader has not been found yet *)
-    if (!leader_ip="") then
-        match querying_leader with
-        (* true if we are waiting for a response in order to wait to assign
-         * the leader ip. *)
-        | true ->  Lwt.on_termination (Lwt_unix.sleep 1.)
-                        (fun () -> (send_msg_from_client msg true));
-        (* otherwise, send an rpc to the first server to ask for the leader ip
-         * and assign it.*)
-        | false ->
-            (* open the output channels *)
-            let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
-            List.iter
-            (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
-            (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
-            (* send the json requesting for the leader ip *)
-            let find_ip_json = "{\"type\":\"find_leader\"}" in
-            match List.nth_opt !channels 0 with
-            | Some (ip, (ic, oc)) -> ignore (send_msg find_ip_json oc);
-                                     send_msg_from_client msg true
-            | None -> ()
-    (* otherwise, send the new updated value to be entered to the leader *)
-    else match (List.assoc_opt !leader_ip !channels) with
-            | None -> ()
-            | Some (ic, oc) ->
-                let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
-                ignore (send_msg new_val_json oc); ()
+  (* this condition is true if leader has not been found yet *)
+  if (!leader_ip="") then
+    match querying_leader with
+    (* true if we are waiting for a response in order to wait to assign
+     * the leader ip. *)
+    | true ->
+      Lwt.on_termination (Lwt_unix.sleep 1.)
+        (fun () -> (send_msg_from_client msg true));
+    (* otherwise, send an rpc to the first server to ask for the leader ip
+     * and assign it.*)
+    | false ->
+      (* open the output channels *)
+      let chans = List.map (fun (ips, ic_ocs) -> ic_ocs) !channels in
+      List.iter
+        (fun (ic, oc) -> Lwt.on_failure (handle_connection ic oc ())
+        (fun e -> Lwt_log.ign_error (Printexc.to_string e));) chans;
+      (* send the json requesting for the leader ip *)
+      let find_ip_json = "{\"type\":\"find_leader\"}" in
+      match List.nth_opt !channels 0 with
+      | Some (ip, (ic, oc)) -> ignore (send_msg find_ip_json oc);
+                               send_msg_from_client msg true
+      | None -> ()
+  (* otherwise, send the new updated value to be entered to the leader *)
+  else match (List.assoc_opt !leader_ip !channels) with
+        | None -> ()
+        | Some (ic, oc) ->
+            let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
+            ignore (send_msg new_val_json oc); ()
 
 (* [handler conn req body] is the handler for the websocket connections, in
- * sending and receiving messages from the web client.
+ * sending and receiving messages from the web client. A majority of this code
+ * is based off the example given at:
+ * github.com/vbmithr/ocaml-websocket/blob/master/test/upgrade_connection.ml
  *)
 let handler
-    (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
-    (req  : Cohttp_lwt_unix.Request.t)
-    (body : Cohttp_lwt_body.t) =
-  if !conn_ws = None then conn_ws := Some conn;
-  if !req_ws = None then req_ws := Some req;
-  if !body_ws = None then body_ws := Some body;
+  (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
+  (req  : Cohttp_lwt_unix.Request.t)
+  (body : Cohttp_lwt_body.t) =
   let open Frame in
-  Lwt_io.eprintf
-        "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
+  Lwt_io.eprintf "[CONN] %s\n%!" (Cohttp.Connection.to_string @@ snd conn)
   >>= fun _ ->
-  let uri = Cohttp.Request.uri req in
-  (* websocket will connect to this url and will listen on this uri *)
-  match Uri.path uri with
-  | "/" ->
-    Lwt_io.eprintf "[PATH] \n%!"
-    >>= fun () ->
-    Cohttp_lwt_body.drain_body body
-    >>= fun () ->
-    Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
+    let uri = Cohttp.Request.uri req in
+    (* websocket will connect to this url and will listen on this uri *)
+    match Uri.path uri with
+    | "/" ->
+      Lwt_io.eprintf "[PATH] \n%!"
+      >>= fun () ->
+      Cohttp_lwt_body.drain_body body
+      >>= fun () ->
+      Websocket_cohttp_lwt.upgrade_connection req (fst conn) (
         fun f ->
-            match f.opcode with
-            | Frame.Opcode.Close ->
-                Printf.eprintf "[RECV] CLOSE\n%!"
-            | _ ->
-                (* send the message from the client to commit to rest of server
-                 *)
-                send_msg_from_client f.content false;
-                Printf.eprintf "[RECV] %s\n%!" f.content
-    );
-    >>= fun (resp, body, frames_out_fn) ->
+          match f.opcode with
+          | Frame.Opcode.Close ->
+              Printf.eprintf "[RECV] CLOSE\n%!"
+          | _ ->
+            (* send the message from the client to commit to rest of server *)
+            send_msg_from_client f.content false;
+            Printf.eprintf "[RECV] %s\n%!" f.content
+      );
+      >>= fun (resp, body, frames_out_fn) ->
     (* send a message to the client *)
     let _ =
-            let rec go () =
-                Lwt_io.eprintf "[SEND] %s\n%!" !res_client_msg
-                >>= fun () ->
-                Lwt.wrap1 frames_out_fn @@
-                    Some (Frame.create ~content:!res_client_msg ())
-                >>= fun () ->
-                Lwt_unix.sleep 1.
-                >>= go
-        in
-        go ()
+      let rec go () =
+        Lwt_io.eprintf "[SEND] %s\n%!" !res_client_msg
+        >>= fun () ->
+        Lwt.wrap1 frames_out_fn @@
+          Some (Frame.create ~content:!res_client_msg ())
+        >>= fun () ->
+        Lwt_unix.sleep 1.
+        >>= go
+      in
+      go ()
     in
     Lwt.return (resp, (body :> Cohttp_lwt_body.t))
   | _ ->
     Lwt_io.eprintf "[PATH] Catch-all\n%!"
     >>= fun () ->
     Cohttp_lwt_unix.Server.respond_string
-        ~status:`Not_found
-        ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
-        ()
+      ~status:`Not_found
+      ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req)) ()
 
 (* [start_websocket host port_num] begins a websocket on the given host and port
  * The purpose is for the web client to connect to this to interface with the
@@ -1166,4 +1176,4 @@ let start_websocket host port_num () =
 
 (* [start_client] begins the client server, by default, localhost:3001 *)
 let start_client () =
-    start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
+  start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
