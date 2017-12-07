@@ -321,6 +321,43 @@ let rec send_heartbeat oc () =
     Lwt_io.flush oc;
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
+(* [create_rpc msg] creates an rpc to be sent to the servers based on the [msg]
+ * containing the value the client wants to add as well as the leader's term and
+ * the index of the entry in the log. Only the leader should call this function
+ *)
+let create_rpc msg =
+    let p_log_idx = get_p_log_idx () in
+        let p_log_term = get_p_log_term () in
+        let new_entry = {
+                value = msg |> member "value" |> to_int;
+                entryTerm = msg |> member "entryTerm" |> to_int;
+                index = msg |> member "index" |> to_int;
+            } in
+
+        let old_log = serv_state.log in
+        let new_idx = (List.length old_log) + 1 in
+        serv_state.log <- (new_idx,new_entry)::old_log;
+
+        let e = [] in
+        let next_index = nindex_from_id serv_state.id in
+        let entries_ =
+            let rec add_relevant es = function
+            | [] -> es
+            | (i, e)::t ->
+                if i >= next_index
+                then add_relevant (e::es) t
+                else add_relevant es t
+            in
+            add_relevant e (List.rev serv_state.log)
+        in
+        {
+            ap_term = serv_state.currentTerm;
+            leader_id = serv_state.id;
+            prev_log_index = p_log_idx;
+            prev_log_term = p_log_term;
+            entries = entries_;
+            leader_commit = serv_state.commitIndex
+        }
 (* [force_conform id] forces server with id [id] to conform to the leader's log
  * if there is an inconsistency between the logs (aka the AERes success would be
  * false) *)
@@ -802,43 +839,7 @@ let handle_message msg oc =
         else
             (* create the append_entries_rpc *)
             (* using 0 to indicate no previous entry *)
-            let p_log_idx = get_p_log_idx in
-            let p_log_term = get_p_log_term in
-            let new_entry = {
-                    value = msg |> member "value" |> to_int;
-                    entryTerm = msg |> member "entryTerm" |> to_int;
-                    index = msg |> member "index" |> to_int;
-                } in
-
-            let old_log = serv_state.log in
-            let new_idx = (List.length old_log) + 1 in
-            serv_state.log <- (new_idx,new_entry)::old_log;
-
-            let e = [] in
-            let next_index = nindex_from_id serv_state.id in
-            let entries_ =
-                let rec add_relevant es = function
-                | [] -> es
-                | (i, e)::t ->
-                    if i >= next_index
-                    then add_relevant (e::es) t
-                    else add_relevant es t
-                in
-                add_relevant e (List.rev serv_state.log)
-            in
-            
-            let rpc = {
-                ap_term = serv_state.currentTerm;
-                leader_id = serv_state.id;
-                prev_log_index = p_log_idx ();
-                prev_log_term = p_log_term ();
-                entries = entries_;
-                leader_commit = serv_state.commitIndex;
-            } in
-
-            let old_log = serv_state.log in
-            let new_idx = (List.length old_log) + 1 in
-            serv_state.log <- (new_idx,new_entry)::old_log;
+            let rpc = create_rpc msg in
 
             let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
             get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
@@ -901,7 +902,7 @@ let accept_connection conn =
     channels := ((ip, (ic, oc))::otherl);
     let iplistlen = List.length (serv_state.neighboringIPs) in
     print_endline (string_of_int iplistlen);
-    if (List.length !channels)=(iplistlen - 1) then init_server ();
+    if (List.length !channels) = iplistlen then init_server ();
     Lwt_log.info "New connection" >>= return
 
 (* this will be filled in the beginning *)
