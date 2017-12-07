@@ -826,15 +826,12 @@ let handle_ae_res msg oc =
 
     end
 
-<<<<<<< HEAD
 (* [handle_vote_req msg oc] handles receiving a vote request from a candidate.
  * This will generally set the server's state to be a follower and proceed
  * with a new election.
  * requires:
  *     -[msg] is a valid vote_res json
  *)
-=======
->>>>>>> d39c4b1aa191e2e0f3c9c164088df11f247d7911
 let handle_vote_req msg oc =
     (* at this point, the current leader has died, so need to delete leader *)
     process_leader_death ();
