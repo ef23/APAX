@@ -671,17 +671,18 @@ and act_candidate () =
   Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
                      (fun () -> check_election_complete ())
 
-(* [init_candidate ()] initializes a server to the candidate state. This is a
- * server-side function
- *)
+(* [init_candidate ()] is a Candidate-side function that makes the transition to
+ * acting as a Candidate server. It serves no purpose other than to call the
+ * act_candidate function, but makes for a clean, consistent style. *)
 and init_candidate () =
     act_candidate ()
 
-(* [act_follower ()] executes all follower responsibilities, namely starting
- * elections, responding to RPCs, and redirecting client calls to the leader
+(* [act_follower ()] is a Follower-side function that executes all follower 
+ * responsibilities, namely starting elections, responding to RPCs, and 
+ * redirecting client calls to the Leader
  *
- * if a follower receives a client request, they will send it as a special RPC
- * to the leader, and then receive the special RPC and reply back to the client
+ * if a Follower receives a client request, they will send it as a special RPC
+ * to the Leader, and then receive the special RPC and reply back to the client
  *)
 and act_follower () =
     print_endline "I am a follower--------------------------------------------";
@@ -707,38 +708,39 @@ and act_follower () =
             Lwt.on_termination (Lwt_unix.sleep (serv_state.heartbeat)) (fun () -> act_follower ())
         end
 
-(* [init_follower ()] initializes a server to act as a follower by beginning a
- * timeout cycle the same length as the server's heartbeat. This is a server
- * side function, the client should never run this.
- *)
+(* [init_follower ()] is a Follower-side function that initializes a server 
+ * to act as a follower by beginning a timeout cycle the same length as the 
+ * server's heartbeat. This is a server side function, the client should never 
+ * run this. *)
 and init_follower () =
   print_endline "init follower";
   Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
                      (fun () -> (act_follower ()));
 
-(* [win_election ()] transitions the server from a candidate to a leader and
- * executes the appropriate actions *)
+(* [win_election ()] is a Candidate-side function that transitions the server 
+ * from a Candidate role to a Leader role and executes the appropriate actions 
+ *)
 and win_election () =
     (* transition to Leader role *)
     serv_state.role <- Leader;
     (* send heartbeats *)
     init_leader ()
 
-(* [lose_election ()] transitions the server from a candidate to a follower
- * and executes the appropriate actions *)
+(* [lose_election ()] is a Candidate-side function that transitions the server 
+ * from a candidate to a follower and executes the appropriate actions *)
 and lose_election () =
     (* transition to Follower role *)
     serv_state.role <- Follower;
     act_follower ()
 
-(* [terminate_election ()] executes when timeout occurs in the middle of an
- * election with no resolution (i.e. no one wins or loses) *)
+(* [terminate_election ()] is a Candidate-side function that executes when 
+ * timeout occurs in the middle of an election with no resolution 
+ * (i.e. no one wins or loses) *)
 and terminate_election () =
     start_election ()
 
 (* [id_from_oc cl oc] grabs the server id of the given [oc] in a list of [cl]
- * Returns string option.
- *)
+ * Returns string option. *)
 let rec id_from_oc cl oc =
   match cl with
   | [] -> None
@@ -755,6 +757,9 @@ let handle_precheck t =
     else if t > serv_state.curr_term then
         serv_state.curr_term <- t;()
 
+(* [handle_ae_req msg oc] is a Follower-side function that handles an 
+ * AppendEntries Request [msg] send by the Leader at output channel [oc] and 
+ * replies back with an AppendEntries Response via [oc] *)
 let handle_ae_req msg oc =
     let ap_term = msg |> member "ap_term" |> to_int in
     let prev_log_index = msg |> member "prev_log_index" |> to_int in
@@ -771,11 +776,10 @@ let handle_ae_req msg oc =
     in
     print_endline (string_of_bool success_bool);
     let ae_res = {
-        success = true; (*before was success_bool*)
+        success = true; (* before was success_bool *)
         curr_term = serv_state.curr_term;
     } in
-    (* TODO do we still process conflicts and append new entries if success = false???? *)
-    (* right now we only process conflicts, append new entries, and update commit if true *)
+    
     if (success_bool) then
         (process_conflicts entries; (* 3 *)
         append_new_entries entries; (* 4 *)
@@ -786,6 +790,8 @@ let handle_ae_req msg oc =
 
     res_append_entries ae_res oc
 
+(* [handle_ae_res msg oc] is a Leader-side function that handles an 
+ * AppendEntries Response [msg] from a Follower at output channel [oc] *)
 let handle_ae_res msg oc =
     let curr_term = msg |> member "curr_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
@@ -797,20 +803,6 @@ let handle_ae_res msg oc =
     ) in
 
     handle_precheck curr_term;
-
-    (* TODO we may need to modify these functions depending on the request that
-     * this is in response to *)
-    (*if success then
-        begin
-            update_match_index oc;
-            update_next_index oc
-        end;*)
-    (* if (not success) then (force_conform responder_id); *)
-
-    (* here we identify the request that this response is to via the first tuple
-     * whose oc matches [oc]; then we remove it if success is true *)
-
-
 
     let servid = match (id_from_oc !channels oc) with
         | None -> "should be impossible"
@@ -880,9 +872,9 @@ let handle_ae_res msg oc =
         get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
     end
 
-(* [handle_vote_req msg oc] handles receiving a vote request from a candidate.
- * This will generally set the server's state to be a llower and proceed
- * with a new election.
+(* [handle_vote_req msg oc] is a Follower-side function that handles receiving 
+ * a vote request from a candidate. This will generally set the server's state 
+ * to be a llower and proceed with a new election.
  * requires:
  *     -[msg] is a valid vote_res json
  *)
@@ -895,7 +887,8 @@ let handle_vote_req msg oc =
     handle_precheck t;
     ignore (res_request_vote msg oc); ()
 
-(* [handle_vote_res msg] handles receiving a vote response message
+(* [handle_vote_res msg] is a Candidate-side function that handles receiving a 
+ * vote response message
  * requires:
  *   -[msg] is a valid vote_res json
  *)
@@ -909,7 +902,8 @@ let handle_vote_res msg =
         (((List.length serv_state.neighboring_ips)) / 2)
             then win_election ()
 
-(*[process_heartbeat msg] handles receiving heartbeats from the leader
+(* [process_heartbeat msg] is a Follower-side function that handles receiving 
+ * heartbeats from the Leader
  * requires:
  *   -[msg] is a valid json with "leader_id" and "leader_commit" fields
  *)
@@ -936,6 +930,7 @@ let process_heartbeat msg =
         end
     else serv_state.leader_id <- l_id; serv_state.voted_for <- None
 
+(* TODO document *)
 let update_output_channels oc msg =
     print_endline "as;flkajsd";
     let ip = msg |> member "ip" |> to_string in
