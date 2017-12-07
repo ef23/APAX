@@ -1010,6 +1010,9 @@ let rec send_msg_from_client msg querying_leader =
                 let new_val_json = "{\"type\":\"client\",\"value\":"^msg^"}" in
                 send_msg new_val_json oc; ()
 
+(* [handler conn req body] is the handler for the websocket connections, in
+ * sending and receiving messages from the web client.
+ *)
 let handler
     (conn : Conduit_lwt_unix.flow * Cohttp.Connection.t)
     (req  : Cohttp_lwt_unix.Request.t)
@@ -1034,7 +1037,8 @@ let handler
             | Frame.Opcode.Close ->
                 Printf.eprintf "[RECV] CLOSE\n%!"
             | _ ->
-                (* do this shit here where u set append entries i guess *)
+                (* send the message from the client to commit to rest of server
+                 *)
                 send_msg_from_client f.content false;
                 Printf.eprintf "[RECV] %s\n%!" f.content
     );
@@ -1057,6 +1061,11 @@ let handler
         ~body:(Sexplib.Sexp.to_string_hum (Cohttp.Request.sexp_of_t req))
         ()
 
+(* [start_websocket host port_num] begins a websocket on the given host and port
+ * The purpose is for the web client to connect to this to interface with the
+ * other server. This will communicate with the rest of the server cluster
+ * on port (port_num + 1). Have the web client connect on ip:port_num
+ *)
 let start_websocket host port_num () =
   serv_state.is_server <- false;
   read_neighboring_ips port_num;
@@ -1073,6 +1082,7 @@ let start_websocket host port_num () =
     (Cohttp_lwt_unix.Server.make ~callback:handler ~conn_closed ());
   Lwt_main.run @@ serve ()
 
+(* [start_client] begins the client server, by default, localhost:3001 *)
 let start_client () =
     start_websocket (Unix.string_of_inet_addr (get_my_addr ())) 3001 ()
 
