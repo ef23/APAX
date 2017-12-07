@@ -700,8 +700,7 @@ let handle_ae_res msg oc =
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
-
-    get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
+    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
     let s_count = (if success then !success_count + 1 else !success_count) in
     let t_count = !response_count + 1 in
