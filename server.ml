@@ -345,10 +345,10 @@ let rec send_heartbeat oc () =
     match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
     | Some (idd, (i, oo)) -> idd
     | None -> "" in
-      List.iter (fun (oc, rpc) -> 
-        ignore (req_append_entries rpc (id_of_oc oc) oc); ()) 
+      List.iter (fun (oc, rpc) ->
+        ignore (req_append_entries rpc (id_of_oc oc) oc); ())
         !get_ae_response_from;
-      Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) 
+      Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat)
         (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
@@ -460,7 +460,7 @@ let update_commit_index () =
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
 let read_neighboring_ips port_num =
-  let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+  let ip_regex = "[0-9]*.[0-9]*.[0-9]*.[0-9]*" in
   let rec process_file f_channel =
     try
       let line = Pervasives.input_line f_channel in
@@ -544,7 +544,7 @@ let act_all () =
 let process_leader_death () =
   let l_id = serv_state.leader_id in
   if l_id <> "" then
-    let ip_regex = "[0-9]*\.[0-9]*\.[0-9]*\.[0-9]*" in
+    let ip_regex = "[0-9]*.[0-9]*.[0-9]*.[0-9]*" in
     let port_regex = "[0-9]*" in
     let _ = Str.search_forward (Str.regexp ip_regex) l_id 0 in
     let ip = Str.matched_string l_id in
