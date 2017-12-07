@@ -349,13 +349,13 @@ let rec send_heartbeat oc () =
         List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from; print_endline ("LENGHT"^string_of_int (List.length !get_ae_response_from));
     Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
-(* [create_rpc msg] creates an rpc to be sent to the servers based on the [msg]
+(* [create_rpc msg i t] creates an rpc to be sent to the servers based on the [msg]
  * containing the value the client wants to add as well as the leader's term and
  * the index of the entry in the log. Only the leader should call this function
  *)
-let create_rpc msg id =
-    let p_log_idx = get_p_log_idx () in
-    let p_log_term = get_p_log_term () in
+let create_rpc msg id p_log_idx p_log_term =
+    (* let p_log_idx = get_p_log_idx () in *)
+    (* let p_log_term = get_p_log_term () in *)
 
     let e = [] in
     let next_index = nindex_from_id id in
@@ -811,7 +811,9 @@ let handle_ae_res msg oc =
     let serv_id = match id_from_oc !channels oc with
     | Some id -> id
     | None -> failwith "oc should have corresponding id" in
-    let tuple_to_add = (oc, create_rpc msg serv_id) in
+    let pli = get_p_log_idx () in
+    let plt = get_p_log_term () in
+    let tuple_to_add = (oc, create_rpc msg serv_id pli plt) in
     get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
     let total_num_servers = List.length serv_state.neighboring_ips in
@@ -899,12 +901,15 @@ let handle_message msg oc =
                 index = (get_p_log_idx ()) + 1;
             } in
 
+        let pli = get_p_log_idx () in
+        let plt = get_p_log_term () in
+
         let old_log = serv_state.log in
         let new_idx = (List.length old_log) + 1 in
         serv_state.log <- (new_idx,new_entry)::old_log;
 
         let output_channels_to_rpc =
-            List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
+            List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id pli plt)) !channels in
         get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
     | _ -> ()
 
