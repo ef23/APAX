@@ -31,6 +31,7 @@ type state = {
 }
 
 let get_ae_response_from = ref []
+let index_responses = ref []
 
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
@@ -379,9 +380,9 @@ let create_rpc msg id =
 let force_conform id =
     let ni = nindex_from_id id in
     (* update the nextIndex for this server to be ni - 1 *)
+
     let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.next_index_lst in
     serv_state.next_index_lst <- (id, ni-1)::new_indices;
-    (* TODO do i retry the AEReq here? upon next client req? *)
     ()
 
 (* [update_matchIndex oc] finds the id of the server corresponding to [oc] and
@@ -582,6 +583,7 @@ and act_leader () =
     act_all();
     print_endline ("my heartbeat timer: " ^ string_of_float (serv_state.heartbeat));
     send_heartbeats (); ()
+
 and init_leader () =
     let rec build_match_index build ips =
         match ips with
@@ -755,22 +757,70 @@ let handle_ae_res msg oc =
 
     (* here we identify the request that this response is to via the first tuple
      * whose oc matches [oc]; then we remove it if success is true *)
-    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
 
-    let s_count = (if success then !success_count + 1 else !success_count) in
-    let t_count = !response_count + 1 in
+    get_ae_response_from := (List.remove_assq oc !get_ae_response_from); 
+
+    let servid = match (id_from_oc !channels oc) with 
+    | None -> "should be impossible"
+    | Some s -> s in
+
+    if (success) then 
+    (let rpc_mes = List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from in 
+
+    let last_entry_serv_committed = 
+    match rpc_mes with 
+    | (o, r) -> 
+        begin 
+            try (List.hd (r.entries)).index with 
+            | _ -> failwith "Impossible. Leader should always have at least one entry to send." 
+        end 
+    in 
+
+    let latest_ind_for_server = 
+    match List.assoc_opt servid serv_state.matchIndexList with
+    | None -> (*serv_state.matchIndexList <- 
+    (servid, if success then last_entry_serv_committed else 0)::serv_state.matchIndexList; 0*) 
+    failwith "should not occur because we already update match index?"
+    | Some i -> i in
+
+    (*index responses is in decreasing log index, and it is (ind of entry, num servers
+    that contain that entry)*)
+    let num_to_add = match !index_responses with 
+    | (indd, co)::t -> indd + 1
+    | [] -> 1 in 
+
+    let rec add_to_index_responses ind_to_add ind_to_stop = 
+    if (ind_to_add >= ind_to_stop) 
+    then () 
+    else 
+    (index_responses := (ind_to_add, 0)::!index_responses; 
+    add_to_index_responses (ind_to_add + 1) ind_to_stop) in 
+
+    add_to_index_responses num_to_add (last_entry_serv_committed);
+
+    index_responses := List.map (fun (ind, count) -> 
+    if (ind > latest_ind_for_server && ind <= last_entry_serv_committed) 
+    then (ind, (count + 1)) else (ind, count))
+    !index_responses) else 
+    force_conform servid;
+    get_ae_response_from := (!get_ae_response_from @ ((oc, create_rpc ())[](*TODO add new rpc*)));
+
+    let total_num_servers = List.length serv_state.neighboringIPs in 
+    let index_to_commit_tup = List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses in 
+    let index_to_commit = fst index_to_commit_tup in 
+    serv_state.commitIndex = index_to_commit
 
     (* if we have a majority of followers allowing the commit, then commit *)
-    if s_count > ((List.length serv_state.neighboring_ips) / 2) then
+    if s_count > (((List.length serv_state.neighboringIPs)-num_clients) / 2) then
         ((* reset counters *)
         response_count := 0; success_count := 0;
-        (* commit to log by incrementing the commit_index *)
+        (* commit to log by incrementing the commitIndex *)
         (* TODO VERY IMPORTANT: HOW DO WE IGNORE EXTRA RESPONSES AFTERWARDS?
          * aka we don't want to add to the response_count bc they could be handling
          * the next round of AEres, so we need to track who has responded to which AEreqs *)
-        let old_ci = serv_state.commit_index in
-        serv_state.commit_index <- old_ci + 1; ())
-    else if t_count = (List.length serv_state.neighboring_ips) then
+        let old_ci = serv_state.commitIndex in
+        serv_state.commitIndex <- old_ci + 1; ())
+    else if t_count = ((List.length serv_state.neighboringIPs)-num_clients) then
         ((* reset reset counters *)
         response_count := 0; success_count := 0;
         ()) (* TODO notify client of failure *)
@@ -851,8 +901,56 @@ let handle_message msg oc =
     | "find_leader_res" -> print_endline "hellooooooooooooo!"; leader_ip := (msg |> member "leader" |> to_string)
     | "client" ->
             (* create the append_entries_rpc *)
+<<<<<<< HEAD
+            (* using 0 to indicate no previous entry *)
+            let p_log_idx = get_p_log_idx () in
+            let p_log_term = get_p_log_term () in
+            let new_entry = {
+                    value = msg |> member "value" |> to_int;
+                    entryTerm = msg |> member "entryTerm" |> to_int;
+                    index = msg |> member "index" |> to_int;
+                } in
+
+            let old_log = serv_state.log in
+            let new_idx = (List.length old_log) + 1 in
+            serv_state.log <- (new_idx,new_entry)::old_log;
+
+            let e = [] in
+            let next_index = nindex_from_id serv_state.id in
+            let entries_ =
+                let rec add_relevant es = function
+                | [] -> es
+                | (i, e)::t ->
+                    if i >= next_index
+                    then add_relevant (e::es) t
+                    else add_relevant es t
+                in
+                add_relevant e (List.rev serv_state.log)
+            in
+            
+            let rpc = {
+                ap_term = serv_state.currentTerm;
+                leader_id = serv_state.id;
+                prev_log_index = p_log_idx ();
+                prev_log_term = p_log_term ();
+                entries = entries_;
+                leader_commit = serv_state.commitIndex;
+            } in
+
+            let old_log = serv_state.log in
+            let new_idx = (List.length old_log) + 1 in
+            serv_state.log <- (new_idx,new_entry)::old_log;
+
+            let output_channels_to_rpc = List.map (fun (_,(_,oc)) -> (oc, rpc)) !channels in
+            get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc);
+
+            (* add the request to the list such that early requests are at the
+             * beginning of the list *)
+            ae_req_to_count := (!ae_req_to_count @ [(rpc, 0)]); ()
+=======
             let output_channels_to_rpc = List.map (fun (id,(_,oc)) -> (oc, create_rpc msg id)) !channels in
             get_ae_response_from := (!get_ae_response_from @ output_channels_to_rpc); ()
+>>>>>>> 809c951bdd1bedeb63f950808d6997c6367c6bd2
     | _ -> ()
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
