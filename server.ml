@@ -316,9 +316,22 @@ let rec print_lst () = function
     | h::t -> match h with
         | {value=v; entry_term = e; index = i} -> print_endline ("("^(string_of_int v)^", "^(string_of_int e)^", "^(string_of_int i)^")"); print_lst () t
 
+let check_majority () =
+        let total_num_servers = List.length serv_state.neighboring_ips in
+        print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
+        let index_to_commit = if (total_num_servers = 0) then (List.length (serv_state.log)) else 
+    (*     List.iter ((fun (ind, count) -> print_endline (string_of_int ind ^ ":" ^string_of_int count))
+    !index_responses); *)
+        match List.find_opt (fun (ind, count) -> count >= (total_num_servers/2)) !index_responses with
+        | None -> (print_endline "none"; serv_state.commit_index)
+        | Some (ind, count) -> (print_endline ("some ind " ^ (string_of_int ind)); ind) in
+        serv_state.commit_index <- index_to_commit
+
 (* [send_heartbeat oc ()] sends one heartbeat to the server corresponding to
  * output channel [oc] *)
 let rec send_heartbeat oc () =
+    check_majority ();
+    print_endline ("commit index " ^ string_of_int (serv_state.commit_index));
     let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
     let int_entry_tuple = 
         match List.nth_opt (serv_state.log) ind_to_send with 
@@ -329,6 +342,7 @@ let rec send_heartbeat oc () =
         )
         | Some x -> x in 
     let string_entry = stringify_e (snd int_entry_tuple) in
+    print_endline ("string entry " ^ string_entry);
     let final_entries_str = "[" ^ string_entry  ^ "]" in
 
 
@@ -448,18 +462,6 @@ let update_commit_index () =
     let n_ci = find_n ub init_N serv_state.commit_index in
     assert (n_ci >= old_ci);
     serv_state.commit_index <- n_ci; ()
-
-let check_majority () =
-        let total_num_servers = List.length serv_state.neighboring_ips in
-        print_endline ("TOTAL NUM SERVERS" ^ string_of_int (total_num_servers) ^"counts are as follows");
-        assert (List.length !index_responses > 0);
-    (*     List.iter ((fun (ind, count) -> print_endline (string_of_int ind ^ ":" ^string_of_int count))
-    !index_responses); *)
-        let index_to_commit =
-        match List.find_opt (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with
-        | None -> (print_endline "none"; serv_state.commit_index)
-        | Some (ind, count) -> (print_endline ("some ind " ^ (string_of_int ind)); ind) in
-        serv_state.commit_index <- index_to_commit
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -734,7 +736,7 @@ let handle_ae_req msg oc =
     in
     print_endline (string_of_bool success_bool);
     let ae_res = {
-        success = true; (*before was success_bool*)
+        success = success_bool;
         curr_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
@@ -808,7 +810,7 @@ let handle_ae_res msg oc =
             let rec add_to_index_responses ind_to_add ind_to_stop =
                 if (ind_to_add > ind_to_stop) then ()
                 else
-                    (index_responses := (ind_to_add, 0)::!index_responses;
+                    (index_responses := (ind_to_add, 1)::!index_responses;
                     add_to_index_responses (ind_to_add + 1) ind_to_stop) in
 
             print_endline ("AFTER ADD TO IND RESPONSES");
