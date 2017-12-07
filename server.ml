@@ -747,29 +747,6 @@ let handle_ae_res msg oc =
     if success then (update_match_index oc; update_next_index oc;);
     if (not success) then (force_conform responder_id);
 
-    (* here we identify the request that this response is to via the first tuple
-     * whose oc matches [oc]; then we remove it if success is true *)
-    if success then get_ae_response_from := (List.remove_assq oc !get_ae_response_from);
-
-    let s_count = (if success then !success_count + 1 else !success_count) in
-    let t_count = !response_count + 1 in
-
-    (* if we have a majority of followers allowing the commit, then commit *)
-    if s_count > ((List.length serv_state.neighboring_ips) / 2) then
-        ((* reset counters *)
-        response_count := 0; success_count := 0;
-        (* commit to log by incrementing the commit_index *)
-        (* TODO VERY IMPORTANT: HOW DO WE IGNORE EXTRA RESPONSES AFTERWARDS?
-         * aka we don't want to add to the response_count bc they could be handling
-         * the next round of AEres, so we need to track who has responded to which AEreqs *)
-        let old_ci = serv_state.commit_index in
-        serv_state.commit_index <- old_ci + 1; ())
-    else if t_count = (List.length serv_state.neighboring_ips) then
-        ((* reset reset counters *)
-        response_count := 0; success_count := 0;
-        ()) (* TODO notify client of failure *)
-    else () (* do nothing basically *)
-
 let handle_vote_req msg oc =
     (* at this point, the current leader has died, so need to delete leader *)
     process_leader_death ();
