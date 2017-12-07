@@ -486,7 +486,11 @@ let read_neighboring_ips port_num =
  * vote decision. *)
 let req_request_vote ballot oc =
     let json =
-      "{\"type\": \"vote_req\",\"term\": " ^ (string_of_int ballot.term) ^",\"candidate_id\": \"" ^ ballot.candidate_id ^ "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^ ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
+      "{\"type\": \"vote_req\",\"term\": " ^
+      (string_of_int ballot.term) ^
+      ",\"candidate_id\": \"" ^ ballot.candidate_id ^
+      "\",\"last_log_index\": " ^ (string_of_int ballot.last_log_index) ^
+      ",\"last_log_term\": " ^ (string_of_int ballot.last_log_term) ^ "}"
     in send_msg json oc
 
 (* [res_request_vote msg oc] is a Follower-side function that handles receiving
@@ -500,7 +504,10 @@ let res_request_vote msg oc =
     let vote_granted = continue && otherTerm >= serv_state.curr_term in
     if (vote_granted) then serv_state.voted_for <- (Some candidate_id);
     let json =
-          "{\"type\": \"vote_res\", \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\"," ^
+          " \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^
+          ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^
+          "}"
          in send_msg json oc
 
 (* [send_heartbeats ()] is a Leader-side function that sends heartbeats to all
