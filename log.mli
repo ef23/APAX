@@ -10,7 +10,7 @@
  * -entry index indicating that it is the ith entry in the log *)
 type entry = {
   value : int;
-  entryTerm : int;
+  entry_term : int;
   index : int;
 }
 

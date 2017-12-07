@@ -214,7 +214,7 @@ let res_append_entries (ae_res:append_entries_res) oc =
       "{" ^
         "\"type\":" ^ "\"appd_res\"" ^ "," ^
         "\"success\":" ^ string_of_bool ae_res.success ^"," ^
-        "\"curr_term\":"  ^ string_of_int ae_res.current_term ^
+        "\"curr_term\":"  ^ string_of_int ae_res.curr_term ^
       "}"
     in
     send_msg json oc
@@ -228,6 +228,7 @@ let json_es (entries): entry list =
 
     (*let entries_str_lst =  Str.split (Str.regexp "[\n]+") entries in*)
     let extract_record e =
+        print_endline " this is before parsing in extract";
         let value = Yojson.Basic.Util.to_int (List.assoc "value" e) in
         print_endline ("value " ^ (string_of_int value));
         let entry_term = Yojson.Basic.Util.to_int (List.assoc "entry_term" e) in
@@ -259,11 +260,12 @@ let rec send_rpcs f =
  * index [pli] with entry term [plt]; else false *)
 let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
     (* returns nth entry of the log *)
-    if prev_log_index > (List.length my_log + 1) then true
+    if (List.length my_log <= 1) then false
+    else if prev_log_index > (List.length my_log + 1) then true
     else
         match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
         | None -> true
-        | Some (_,e) -> if e.entry_term = prev_log_term then false else true
+        | Some (_,e) -> if e.entry_term = prev_log_term then (print_endline "terms"; false) else true
 
 (* [process_conflicts entries] goes through the server's log and removes entries
  * that conflict (same index different term) with those in [entries] *)
@@ -333,7 +335,7 @@ let rec send_heartbeat oc () =
         "{" ^
         "\"type\":\"heartbeat\"," ^
         "\"leader_id\":" ^ "\"" ^ serv_state.id ^ "\"" ^ "," ^
-        "\"term\":" ^ string_of_int serv_state.curr_term ^ "," ^
+        "\"curr_term\":" ^ string_of_int serv_state.curr_term ^ "," ^
         "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
         "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
         "\"entries\": \"\"," ^
@@ -486,7 +488,7 @@ let res_request_vote msg oc =
     let vote_granted = continue && otherTerm >= serv_state.curr_term in
     if (vote_granted) then serv_state.voted_for <- (Some candidate_id);
     let json =
-          "{\"type\": \"vote_res\", \"current_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
+          "{\"type\": \"vote_res\", \"curr_term\": " ^ (string_of_int serv_state.curr_term) ^ ",\"vote_granted\": " ^ (string_of_bool vote_granted) ^ "}"
          in send_msg json oc
     (* match serv_state.lastEntry with
     | Some log ->
@@ -713,14 +715,14 @@ let handle_ae_req msg oc =
     handle_precheck ap_term;
 
     let success_bool =
-        if ap_term < serv_state.curr_term then false (* 1 *)
+        if ap_term < serv_state.curr_term then (print_endline "first is false"; false) (* 1 *)
         else if mismatch_log serv_state.log prev_log_index prev_log_term then false (* 2 *)
         else true
     in
     print_endline (string_of_bool success_bool);
     let ae_res = {
         success = success_bool;
-        current_term = serv_state.curr_term;
+        curr_term = serv_state.curr_term;
     } in
     (* TODO do we still process conflicts and append new entries if success = false???? *)
     (* right now we only process conflicts, append new entries, and update commit if true *)
@@ -827,7 +829,7 @@ and handler
  * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *)
 
 and handle_ae_res msg oc =
-    let current_term = msg |> member "current_term" |> to_int in
+    let curr_term = msg |> member "curr_term" |> to_int in
     let success = msg |> member "success" |> to_bool in
 
     let responder_id = (
@@ -836,7 +838,7 @@ and handle_ae_res msg oc =
         | Some x -> x
     ) in
 
-    handle_precheck current_term;
+    handle_precheck curr_term;
 
     (* TODO we may need to modify these functions depending on the request that
      * this is in response to *)
@@ -867,7 +869,7 @@ and handle_ae_res msg oc =
     | Some s -> s in
 
     if (success) then
-    (let rpc_mes = List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from in
+    (let rpc_mes = try List.find (fun (oc_l, rpc_l) -> oc == oc_l) !get_ae_response_from with | _ -> failwith "finding error oops" in
 
     let last_entry_serv_committed =
     match rpc_mes with
@@ -910,7 +912,7 @@ and handle_ae_res msg oc =
     get_ae_response_from := !get_ae_response_from @ (tuple_to_add::[]);
 
     let total_num_servers = List.length serv_state.neighboring_ips in
-    let index_to_commit_tup = List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses in
+    let index_to_commit_tup = try List.find (fun (ind, count) -> count > (total_num_servers/2)) !index_responses with | _ -> failwith "finding majority" in
     let index_to_commit = fst index_to_commit_tup in
     serv_state.commit_index <- index_to_commit
 
@@ -926,7 +928,7 @@ and handle_vote_req msg oc =
 (* [handle_vote_res msg] handles receiving a vote response message *)
 and handle_vote_res msg =
     print_endline "handling vote res!";
-    let currTerm = msg |> member "current_term" |> to_int in
+    let currTerm = msg |> member "curr_term" |> to_int in
     let voted = msg |> member "vote_granted" |> to_bool in
     handle_precheck currTerm;
     if voted then vote_counter := !vote_counter + 1;

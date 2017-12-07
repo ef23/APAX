@@ -6,6 +6,6 @@ type vote_req = {
 }
 
 type vote_res = {
-  current_term : int;
+  curr_term : int;
   vote_granted : bool
 }

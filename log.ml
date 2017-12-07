@@ -1,6 +1,6 @@
 type entry = {
   value : int;
-  entryTerm : int;
+  entry_term : int;
   index : int;
 }
 

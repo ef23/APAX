@@ -24,6 +24,6 @@ type append_entries_req = {
  * prevLogTerm
  *)
 type append_entries_res = {
-  current_term : int;
+  curr_term : int;
   success : bool
 }

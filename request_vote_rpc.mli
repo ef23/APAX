@@ -18,6 +18,6 @@ type vote_req = {
  * vote_granted: true means candidate received vote
  *)
 type vote_res = {
-  current_term : int;
+  curr_term : int;
   vote_granted : bool
 }
