@@ -13,21 +13,21 @@ type next_index = (string*int) list (* (id * next index) *)
 type match_index = (string*int) list (* (id * match index) *)
 
 type state = {
-    mutable id : string;
-    mutable leader_id: string;
-    mutable role : role;
-    mutable curr_term : int;
-    mutable voted_for : string option;
-    mutable log : (int * entry) list; (* index * entry list *)
-    mutable commit_index : int;
-    mutable last_applied : int;
-    mutable heartbeat : float;
-    mutable neighboring_ips : ip;
-    mutable next_index_lst : next_index;
-    mutable match_index_lst : match_index;
-    mutable received_heartbeat : bool;
-    mutable started : bool;
-    mutable is_server : bool;
+  mutable id : string;
+  mutable leader_id: string;
+  mutable role : role;
+  mutable curr_term : int;
+  mutable voted_for : string option;
+  mutable log : (int * entry) list; (* index * entry list *)
+  mutable commit_index : int;
+  mutable last_applied : int;
+  mutable heartbeat : float;
+  mutable neighboring_ips : ip;
+  mutable next_index_lst : next_index;
+  mutable match_index_lst : match_index;
+  mutable received_heartbeat : bool;
+  mutable started : bool;
+  mutable is_server : bool;
 }
 
 let get_ae_response_from = ref []
@@ -35,32 +35,32 @@ let index_responses = ref []
 
 (* the lower range of the election timeout, in th is case 150-300ms*)
 let generate_heartbeat () =
-    let lower = 0.150 in
-    let range = 0.150 in
-    let timer = (Random.float range) +. lower in
-    timer
+  let lower = 0.150 in
+  let range = 0.150 in
+  let timer = (Random.float range) +. lower in
+  timer
 
 let serv_state = {
-    id = "";
-    leader_id = "";
-    role = Follower;
-    curr_term = 0;
-    voted_for = None;
-    log = [];
-    commit_index = 0;
-    last_applied = 0;
-    heartbeat = 0.;
-    neighboring_ips = [];
-    next_index_lst = [];
-    match_index_lst = [];
-    received_heartbeat = false;
-    started = false;
-    is_server = true;
+  id = "";
+  leader_id = "";
+  role = Follower;
+  curr_term = 0;
+  voted_for = None;
+  log = [];
+  commit_index = 0;
+  last_applied = 0;
+  heartbeat = 0.;
+  neighboring_ips = [];
+  next_index_lst = [];
+  match_index_lst = [];
+  received_heartbeat = false;
+  started = false;
+  is_server = true;
 }
 
 (* [get_my_addr ()] gets the current address of this host *)
 let get_my_addr () =
-    (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
+  (Unix.gethostbyname(Unix.gethostname())).Unix.h_addr_list.(0)
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -95,9 +95,6 @@ let ae_req_to_count = ref []
 
 let res_client_msg = ref "connected!"
 let leader_ip = ref ""
-let (conn_ws : (Conduit_lwt_unix.flow * Cohttp.Connection.t) option ref) = ref None
-let (req_ws : Cohttp_lwt_unix.Request.t option ref) = ref None
-let (body_ws : Cohttp_lwt_body.t option ref) = ref None
 
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
@@ -108,52 +105,52 @@ let (body_ws : Cohttp_lwt_body.t option ref) = ref None
 (* [id_from_oc cl oc] takes an output channel [oc] and channels+id list [cl] and
  * finds the id corresponding to the channel [oc] *)
 let rec id_from_oc cl oc =
-    match cl with
-    | [] -> None
-    | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
+  match cl with
+  | [] -> None
+  | (ip, (_, oc2))::t -> if (oc == oc2) then Some ip else id_from_oc t oc
 
 (* [last_entry ()] is the last entry added to the server's log
  * The log must be sorted in reverse chronological order *)
 let last_entry () =
-    match serv_state.log with
-    | [] -> None
-    | (_, e)::_ -> Some e
+  match serv_state.log with
+  | [] -> None
+  | (_, e)::_ -> Some e
 
 (* [get_p_log_idx ()] returns the 1-based index of the most recently added
  * entry in the log *)
 let get_p_log_idx () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.index
+  match last_entry () with
+  | None -> 0
+  | Some e -> e.index
 
 (* [get_p_log_term ()] returns the 1-based term of the most recently added
  * entry in the log *)
 let get_p_log_term () =
-    match last_entry () with
-    | None -> 0
-    | Some e -> e.entry_term
+  match last_entry () with
+  | None -> 0
+  | Some e -> e.entry_term
 
 (* [full_addr_str p] returns the concatenation of this server's IP and port *)
 let full_addr_str port_num =
-    Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
+  Unix.string_of_inet_addr (get_my_addr ()) ^ ":" ^ (string_of_int port_num)
 
 (* [change_heartbeat ()] changes the current server's heartbeat to a randomized,
  * value on a fixed interval *)
 let change_heartbeat () =
-    let new_heartbeat = generate_heartbeat () in
-    serv_state.heartbeat <- new_heartbeat
+  let new_heartbeat = generate_heartbeat () in
+  serv_state.heartbeat <- new_heartbeat
 
 (* [update_neighbors ips id] updates this server's neighboring IPs list with
  * [ips] TODO more on this later *)
 let update_neighbors ips id =
-    serv_state.neighboring_ips <- ips;
-    serv_state.id <- id
+  serv_state.neighboring_ips <- ips;
+  serv_state.id <- id
 
 (* [send_msg str oc] is a Leader-side function that sends the string message
  * [msg] to the Follower connected by output channel [oc] *)
  let send_msg str oc =
-    print_endline ("sending: "^str);
-    ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
+  print_endline ("sending: "^str);
+  ignore (Lwt_io.write_line oc str); Lwt_io.flush oc
 
 (* [stringify_e e] converts an entry record [e] to a string *)
 let stringify_e (e:entry): string =
@@ -168,61 +165,61 @@ let stringify_e (e:entry): string =
 (* [nindex_from_id id] takes a server id [id] and the next_index_lst and
  * finds the nextIndex of server [id] *)
 let nindex_from_id id =
-    match List.assoc_opt id serv_state.next_index_lst with
-    | None -> -1
-    | Some i -> i
+  match List.assoc_opt id serv_state.next_index_lst with
+  | None -> -1
+  | Some i -> i
 
 (* [req_append_entries msg ip oc] is a Leader-side function that sends an
  * AppendEntries Request to the Follower at output channel [oc] *)
 let req_append_entries (msg : append_entries_req) (ip : string) oc =
-    let string_entries = List.map (fun x -> stringify_e x) msg.entries in
-    let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
-    let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
-    let json =
-       "{" ^
-        "\"type\": \"appd_req\"," ^
-        "\"ap_term\":" ^ (string_of_int msg.ap_term) ^"," ^
-        "\"leader_id\":" ^ "\"" ^ (msg.leader_id) ^ "\"," ^
-        "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
-        "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
-        "\"entries\":" ^ final_entries_str
-        ^ "," ^
-        "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
-      "}"
-    in
-    send_msg json oc
+  let string_entries = List.map (fun x -> stringify_e x) msg.entries in
+  let entries_str = List.fold_right (fun x y -> x ^ "," ^ y) string_entries "" in
+  let final_entries_str = "[" ^ (String.sub entries_str 0 ((String.length entries_str) - 1)) ^ "]" in
+  let json =
+    "{" ^
+      "\"type\": \"appd_req\"," ^
+      "\"ap_term\":" ^ (string_of_int msg.ap_term) ^"," ^
+      "\"leader_id\":" ^ "\"" ^ (msg.leader_id) ^ "\"," ^
+      "\"prev_log_index\": " ^ (string_of_int msg.prev_log_index) ^ "," ^
+      "\"prev_log_term\": " ^ (string_of_int msg.prev_log_term) ^ "," ^
+      "\"entries\":" ^ final_entries_str
+      ^ "," ^
+      "\"leader_commit\":" ^ (string_of_int msg.leader_commit) ^
+    "}"
+  in
+  send_msg json oc
 
 (* [res_append_entries ae_res oc] is a Follower-side function that sends the
  * stringified append entries response [ae_res] to the output channel [oc] *)
 let res_append_entries (ae_res:append_entries_res) oc =
-    if (not serv_state.is_server) then Lwt.return(()) else
-    let json =
-      "{" ^
-        "\"type\":" ^ "\"appd_res\"" ^ "," ^
-        "\"success\":" ^ string_of_bool ae_res.success ^ "," ^
-        "\"curr_term\":"  ^ string_of_int ae_res.curr_term ^
-      "}"
-    in
-    send_msg json oc
+  if (not serv_state.is_server) then Lwt.return(()) else
+  let json =
+    "{" ^
+      "\"type\":" ^ "\"appd_res\"" ^ "," ^
+      "\"success\":" ^ string_of_bool ae_res.success ^ "," ^
+      "\"curr_term\":"  ^ string_of_int ae_res.curr_term ^
+    "}"
+  in
+  send_msg json oc
 
 (* [json_es entries] should return a list of entries parsed from the string [entries].
  * - requires: [entries] has at least one entry in it
  *)
 let json_es (entries): entry list =
-    let json = Yojson.Basic.Util.to_list entries in
-    let assoc_list = List.map (fun x -> Yojson.Basic.Util.to_assoc x) (json) in
-    let extract_record e =
-        let value = Yojson.Basic.Util.to_int (List.assoc "value" e) in
-        let entry_term = Yojson.Basic.Util.to_int (List.assoc "entry_term" e) in
-        let ind = Yojson.Basic.Util.to_int (List.assoc "index" e) in
-        {
-            value = value;
-            entry_term = entry_term;
-            index = ind;
-        }
-    in
-    let ocaml_entries = List.map extract_record assoc_list in
-    ocaml_entries
+  let json = Yojson.Basic.Util.to_list entries in
+  let assoc_list = List.map (fun x -> Yojson.Basic.Util.to_assoc x) (json) in
+  let extract_record e =
+    let value = Yojson.Basic.Util.to_int (List.assoc "value" e) in
+    let entry_term = Yojson.Basic.Util.to_int (List.assoc "entry_term" e) in
+    let ind = Yojson.Basic.Util.to_int (List.assoc "index" e) in
+    {
+      value = value;
+      entry_term = entry_term;
+      index = ind;
+    }
+  in
+  let ocaml_entries = List.map extract_record assoc_list in
+  ocaml_entries
 
 (* [send_rpcs f] is a Leader-side function that recursively sends RPCs to every
  * ip in [ips] using the partially applied function [f], which is assumed to be
@@ -241,211 +238,210 @@ let rec send_rpcs f =
  * [l] doesnt contain an entry at index [pli] with entry term [plt];
  * else false *)
 let mismatch_log (my_log:(int*entry) list) prev_log_index prev_log_term =
-    (* returns nth entry of the log *)
-    if (List.length my_log <= 1) then false
-    else if prev_log_index > (List.length my_log + 1) then true
-    else
-        match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
-        | None -> true
-        | Some (_,e) -> if e.entry_term = prev_log_term then false else true
+  (* returns nth entry of the log *)
+  if (List.length my_log <= 1) then false
+  else if prev_log_index > (List.length my_log + 1) then true
+  else
+    match (List.find_opt (fun (i,e) -> i = prev_log_index) my_log) with
+    | None -> true
+    | Some (_,e) -> if e.entry_term = prev_log_term then false else true
 
 (* [process_conflicts entries] is a Follower-side function that goes through the
  * server's log and removes entries that conflict (same index different term)
  * with those in [entries] *)
 let process_conflicts entries =
-    (* [does_conflict e1 e2] returns true if e1 has a different term than e2
-     * -requires e1 and e2 to have the same index *)
-    let does_conflict log_e new_e =
-        if log_e.entry_term = new_e.entry_term then false else true in
+  (* [does_conflict e1 e2] returns true if e1 has a different term than e2
+   * -requires e1 and e2 to have the same index *)
+  let does_conflict log_e new_e =
+    if log_e.entry_term = new_e.entry_term then false else true in
 
-    (* given a new entry e, go through the log and return a new (shorter) log
-     * if we find a conflict; otherwise return the original log *)
-    let rec iter_log old_l new_l new_e =
-        match new_l with
-        | [] -> old_l
-        | (i,log_e)::t ->
-            if (i = new_e.index && does_conflict log_e new_e) then t
-            else iter_log old_l t new_e in
+  (* given a new entry e, go through the log and return a new (shorter) log
+   * if we find a conflict; otherwise return the original log *)
+  let rec iter_log old_l new_l new_e =
+    match new_l with
+    | [] -> old_l
+    | (i,log_e)::t ->
+      if (i = new_e.index && does_conflict log_e new_e) then t
+      else iter_log old_l t new_e in
 
-    let old_log = serv_state.log in
+  let old_log = serv_state.log in
 
-    (* [iter_entries el s_log] looks for conflicts for each entry in [el]
-     * and keeps track of the shortest log [short_log] *)
-    let rec iter_entries el short_log =
-        match el with
-        | [] -> short_log
-        | e::t -> let new_log = iter_log old_log old_log e in
-            if (List.length new_log < List.length short_log) then
-                iter_entries t new_log
-            else iter_entries t short_log in
+  (* [iter_entries el s_log] looks for conflicts for each entry in [el]
+   * and keeps track of the shortest log [short_log] *)
+  let rec iter_entries el short_log =
+    match el with
+    | [] -> short_log
+    | e::t -> let new_log = iter_log old_log old_log e in
+      if (List.length new_log < List.length short_log) then
+        iter_entries t new_log
+      else iter_entries t short_log in
 
-    let n_log = iter_entries entries old_log in
-    serv_state.log <- n_log
+  let n_log = iter_entries entries old_log in
+  serv_state.log <- n_log
 
 (* [append_new_entries entries] is a Follower-side function that adds the new
  * entries to the log. The entries must be in reverse chronological order as
  * with the log *)
 let rec append_new_entries (entries : entry list) : unit =
-    let entries = List.rev_append entries [] in
-    let rec append_new (entries: entry list):unit =
-        match entries with
-        | [] -> ()
-        | h::t ->
-            begin
-                if List.exists (fun (_,e) -> e = h) serv_state.log
-                then append_new t
-                else
-                let old_st_log = serv_state.log in
-                let new_ind = List.length old_st_log + 1 in
-                let new_entry = {h with index = new_ind} in
-                let new_addition = (new_ind, new_entry) in
-                serv_state.log <- new_addition::old_st_log;
-                append_new t
-            end
-    in
-    append_new entries
+  let entries = List.rev_append entries [] in
+  let rec append_new (entries: entry list):unit =
+    match entries with
+    | [] -> ()
+    | h::t ->
+      begin
+        if List.exists (fun (_,e) -> e = h) serv_state.log
+        then append_new t
+        else
+        let old_st_log = serv_state.log in
+        let new_ind = List.length old_st_log + 1 in
+        let new_entry = {h with index = new_ind} in
+        let new_addition = (new_ind, new_entry) in
+        serv_state.log <- new_addition::old_st_log;
+        append_new t
+      end
+  in
+  append_new entries
 
 (* [check_majority ()] is a Leader-side function that checks if a majority for a
  * specific entry index has been reached, and if so, updates the commit_index. *)
 let check_majority () =
-        let total_num_servers = List.length serv_state.neighboring_ips in
-        let index_to_commit = if (total_num_servers = 0) then (List.length (serv_state.log)) else
-        match List.find_opt (fun (ind, count) -> count >= (total_num_servers/2)) !index_responses with
-        | None -> serv_state.commit_index
-        | Some (ind, count) -> ind in
-        serv_state.commit_index <- index_to_commit
+  let total_num_servers = List.length serv_state.neighboring_ips in
+  let index_to_commit = if (total_num_servers = 0) then (List.length (serv_state.log)) else
+  match List.find_opt (fun (ind, count) -> count >= (total_num_servers/2)) !index_responses with
+    | None -> serv_state.commit_index
+    | Some (ind, count) -> ind in
+  serv_state.commit_index <- index_to_commit
 
 (* [send_heartbeat oc ()] is a Leader-side function that sends one heartbeat to
  * the Follower server corresponding to output channel [oc] *)
 let rec send_heartbeat oc () =
-    check_majority ();
-    let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
-    let int_entry_tuple =
-        match List.nth_opt (serv_state.log) ind_to_send with
-        | None -> (1,
-            {value=0;
-            entry_term=(-1);
-            index=(-1)}
-        )
-        | Some x -> x in
-    let string_entry = stringify_e (snd int_entry_tuple) in
-    let final_entries_str = "[" ^ string_entry  ^ "]" in
-    ignore (Lwt_io.write_line oc (
-        "{" ^
-        "\"type\":\"heartbeat\"," ^
-        "\"leader_id\":" ^ "\"" ^ serv_state.id ^ "\"" ^ "," ^
-        "\"curr_term\":" ^ string_of_int serv_state.curr_term ^ "," ^
-        "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
-        "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
-        "\"entries\": " ^ final_entries_str ^ "," ^
-        "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
-        "}"));
-    ignore (Lwt_io.flush oc);
-    let id_of_oc occ =
-        match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
-        | Some (idd, (i, oo)) -> idd
-        | None -> "" in
-        List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from;
-    Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
+  check_majority ();
+  let ind_to_send = (List.length (serv_state.log)) - serv_state.commit_index in
+  let int_entry_tuple =
+    match List.nth_opt (serv_state.log) ind_to_send with
+    | None -> (1,
+        {value=0;
+        entry_term=(-1);
+        index=(-1)}
+    )
+    | Some x -> x in
+  let string_entry = stringify_e (snd int_entry_tuple) in
+  let final_entries_str = "[" ^ string_entry  ^ "]" in
+  ignore (Lwt_io.write_line oc (
+    "{" ^
+    "\"type\":\"heartbeat\"," ^
+    "\"leader_id\":" ^ "\"" ^ serv_state.id ^ "\"" ^ "," ^
+    "\"curr_term\":" ^ string_of_int serv_state.curr_term ^ "," ^
+    "\"prev_log_index\": " ^ (get_p_log_idx () |> string_of_int) ^ "," ^
+    "\"prev_log_term\": " ^ (get_p_log_term () |> string_of_int) ^ "," ^
+    "\"entries\": " ^ final_entries_str ^ "," ^
+    "\"leader_commit\":" ^ string_of_int serv_state.commit_index ^
+    "}"));
+  ignore (Lwt_io.flush oc);
+  let id_of_oc occ =
+    match (List.find_opt (fun (_, (_, o)) -> o == occ) (!channels)) with
+    | Some (idd, (i, oo)) -> idd
+    | None -> "" in
+    List.iter (fun (oc, rpc) -> req_append_entries rpc (id_of_oc oc) oc; ())  !get_ae_response_from;
+  Lwt.on_termination (Lwt_unix.sleep serv_state.heartbeat) (fun () -> send_heartbeat oc ())
 
 (* [create_rpc msg i t] is a Leader-side function that creates an rpc to be sent
  * to the servers based on the [msg] containing the value the client wants to
  * add as well as the leader's term and the index of the entry in the log. *)
 let create_rpc msg id p_log_idx p_log_term =
-    (* let p_log_idx = get_p_log_idx () in *)
-    (* let p_log_term = get_p_log_term () in *)
+  (* let p_log_idx = get_p_log_idx () in *)
+  (* let p_log_term = get_p_log_term () in *)
 
-    let e = [] in
-    let next_index = nindex_from_id id in
-    let entries_ =
-        let rec add_relevant es = function
-        | [] -> es
-        | (i, e)::t ->
-            if i >= next_index
-            then add_relevant (e::es) t
-            else add_relevant es t
-        in
-        add_relevant e (List.rev serv_state.log)
+  let e = [] in
+  let next_index = nindex_from_id id in
+  let entries_ =
+    let rec add_relevant es = function
+    | [] -> es
+    | (i, e)::t ->
+      if i >= next_index
+      then add_relevant (e::es) t
+      else add_relevant es t
     in
-    {
-        ap_term = serv_state.curr_term;
-        leader_id = serv_state.id;
-        prev_log_index = p_log_idx;
-        prev_log_term = p_log_term;
-        entries = entries_;
-        leader_commit = serv_state.commit_index
-    }
+    add_relevant e (List.rev serv_state.log)
+  in
+  {
+    ap_term = serv_state.curr_term;
+    leader_id = serv_state.id;
+    prev_log_index = p_log_idx;
+    prev_log_term = p_log_term;
+    entries = entries_;
+    leader_commit = serv_state.commit_index
+  }
 
 (* [force_conform id] is a Leader-side function that forces a Follower server
  * with id [id] to conform to the leader's log if there is an inconsistency
  * between the logs (aka the AERes success would be false) *)
 let force_conform id =
-    let ni = nindex_from_id id in
-    (* update the nextIndex for this server to be ni - 1 *)
+  let ni = nindex_from_id id in
+  (* update the nextIndex for this server to be ni - 1 *)
 
-    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.next_index_lst in
-    serv_state.next_index_lst <- (id, ni-1)::new_indices;
-    ()
+  let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> id) serv_state.next_index_lst in
+  serv_state.next_index_lst <- (id, ni-1)::new_indices;
+  ()
 
 (* [update_matchIndex oc] is a Leader-side function that finds the id of the
  * server corresponding to [oc] and updates its matchIndex in this server's
  * matchIndex list *)
 let rec update_match_index oc =
-    match (id_from_oc !channels oc) with
-    | None -> failwith "uh wtf"
-    | Some id ->
-        (* basically rebuild the entire matchIndex list lol *)
-        let rec apply build mi_list idx =
-            match mi_list with
-            | [] -> failwith "this should literally never happen"
-            | (s,i)::t ->
-                if s = idx then
-                    (* note: nextIndex - matchIndex > 1 if and only if a new
-                     * leader comes into power with a significantly larger log
-                     * which is a result of unifying a network partition, which
-                     * is NOT a feature that we support *)
-                    (let n_matchi = List.length serv_state.log in
-                    serv_state.match_index_lst <- ([(s,n_matchi)]@t@build); ())
-                else apply ((s,i)::build) t idx
-        in
-        apply [] serv_state.match_index_lst id; ()
+  match (id_from_oc !channels oc) with
+  | None -> failwith "uh wtf"
+  | Some id ->
+    (* basically rebuild the entire matchIndex list lol *)
+    let rec apply build mi_list idx =
+      match mi_list with
+      | [] -> failwith "this should literally never happen"
+      | (s,i)::t ->
+        if s = idx then
+          (* note: nextIndex - matchIndex > 1 if and only if a new
+           * leader comes into power with a significantly larger log
+           * which is a result of unifying a network partition, which
+           * is NOT a feature that we support *)
+          (let n_matchi = List.length serv_state.log in
+          serv_state.match_index_lst <- ([(s,n_matchi)]@t@build); ())
+        else apply ((s,i)::build) t idx
+    in
+    apply [] serv_state.match_index_lst id; ()
 
 (* [update_next_index ] is a Leader-side function that updates the next_index
  * for a given Follower server connected to [oc] *)
 let update_next_index oc =
-    let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
-    let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
-    serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
+  let (ip, (_,_)) = List.find (fun (_, (_, list_oc)) -> oc == list_oc) !channels in
+  let new_indices = List.filter (fun (lst_ip, _) -> lst_ip <> ip) serv_state.next_index_lst in
+  serv_state.next_index_lst <- (ip, List.length serv_state.log)::new_indices
 
 (* [update_commit_index ()] is a Leader-side function that updates the
  * commit_index for the Leader by finding an N such that N > commit_index, a
  * majority of matchIndex values >= N, and the term of the Nth entry in the
  * leader's log is equal to curr_term *)
 let update_commit_index () =
-    (* upper bound on N, which is the index of the last entry *)
-    let ub = get_p_log_idx () in
-    let init_N = serv_state.commit_index + 1 in
+  (* upper bound on N, which is the index of the last entry *)
+  let ub = get_p_log_idx () in
+  let init_N = serv_state.commit_index + 1 in
 
-    (* find whether the majority of followers have matchIndex >= N *)
-    let rec mi_geq_n count total n li =
-        match li with
-        | [] -> (count > (total / 2))
-        | (_,i)::t ->
-            if i >= n then mi_geq_n (count+1) total n t
-            else mi_geq_n count total n t in
+  (* find whether the majority of followers have matchIndex >= N *)
+  let rec mi_geq_n count total n li =
+    match li with
+    | [] -> (count > (total / 2))
+    | (_,i)::t ->
+        if i >= n then mi_geq_n (count+1) total n t
+        else mi_geq_n count total n t in
 
-    (* find the highest such n, n <= ub, such that the above function returns true *)
-    let rec find_n ub n high =
-        let l = serv_state.match_index_lst in
-        if n > ub then high
-        else if (mi_geq_n 0 (List.length l) n l) then find_n ub (n+1) n
-        else find_n ub (n+1) high in
+  (* find the highest such n, n <= ub, such that the above function returns true *)
+  let rec find_n ub n high =
+    let l = serv_state.match_index_lst in
+    if n > ub then high
+    else if (mi_geq_n 0 (List.length l) n l) then find_n ub (n+1) n
+    else find_n ub (n+1) high in
 
-    let old_ci = serv_state.commit_index in
-    let n_ci = find_n ub init_N serv_state.commit_index in
-    assert (n_ci >= old_ci);
-    serv_state.commit_index <- n_ci; ()
-
+  let old_ci = serv_state.commit_index in
+  let n_ci = find_n ub init_N serv_state.commit_index in
+  assert (n_ci >= old_ci);
+  serv_state.commit_index <- n_ci; ()
 (* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
 
                            MAIN SERVER FUNCTIONS
